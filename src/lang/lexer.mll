@@ -79,9 +79,9 @@ rule token = parse
 | "&&"				{ Tland }
 | "||"				{ Tlor }
 | '.'				{ Tdot }
-| ('0' | ['1'-'9'] digit*) as nums				{ Tint (int_of_string nums) }
-
-| "00"				{ lexicalError "Unexpected leading zeroes." lexbuf }
+| ('0' | ['1'-'9'] digit*) as nums				{ Tint (nums) }
+	(* Keep it as a string: the parser will be able to check if neg or pos *)
+| "0"				{ lexicalError "Unexpected leading zero(es)." lexbuf }
 | (alpha (alpha | digit | '_')*) as ident		{ 
 					try Hashtbl.find keywordsHT ident
 					with Not_found -> Tident(ident) }
