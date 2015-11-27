@@ -14,6 +14,7 @@ _build/
 # ocamlbuild targets
 *.byte
 *.native
+*.depend
 
 # oasis generated files
 setup.data
@@ -21,3 +22,6 @@ setup.log
 
 # vim
 *.swp
+
+# binary
+pscala
