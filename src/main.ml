@@ -42,6 +42,10 @@ let () =
 		let loc = locateError (Lexing.lexeme_start_p lexbuf) !sourceFilePath in
 		eprintf "%sLexical error: %s\n@?" loc c;
 		exit 1
+	| Failure c ->
+		let loc = locateError (Lexing.lexeme_start_p lexbuf) !sourceFilePath in
+		eprintf "%sError: %s\n@?" loc c;
+		exit 1
 	| Ast.Parsing_error c ->
 		let loc = locateError (Lexing.lexeme_start_p lexbuf) !sourceFilePath in
 		eprintf "%sParsing error: %s\n@?" loc c;
