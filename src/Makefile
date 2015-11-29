@@ -1,6 +1,6 @@
 CMX=lang/ast.cmx lang/lexer.cmx lang/parser.cmx lang/astPrinter.cmx main.cmx
 BIN=pscala
-GENERATED=lang/lexer.ml lang/parser.ml lang/parser.mli
+GENERATED=lang/lexer.ml lang/parser.ml lang/parser.mli 
 RECDIR=lang
 FLAGS=-I $(RECDIR)
 CMP=ocamlopt

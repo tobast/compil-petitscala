@@ -30,7 +30,9 @@ let () =
 		exit 2
 	end;
 
-	let sourceHandle = open_in !sourceFilePath in
+	let sourceHandle = (try open_in !sourceFilePath
+		with Sys_error s -> eprintf "Error: %s\n@?" s; exit 2)
+	in
 	let lexbuf = Lexing.from_channel sourceHandle in
 	
 	let ast = (try
@@ -44,8 +46,12 @@ let () =
 		let loc = locateError (Lexing.lexeme_start_p lexbuf) !sourceFilePath in
 		eprintf "%sParsing error: %s\n@?" loc c;
 		exit 1
+	| Parser.Error ->
+		let loc = locateError (Lexing.lexeme_start_p lexbuf) !sourceFilePath in
+		eprintf "%sSyntax error.\n@?" loc;
+		exit 1
 	) in
-	close_in sourceHandle; 
+	close_in sourceHandle (* ;
 	AstPrinter.print_expr Format.std_formatter ast;
-	print_newline ()
+	print_newline () *)
 
