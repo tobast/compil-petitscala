@@ -1,9 +1,12 @@
 %{
 	open Ast
 
+	let parse_error str =
+		raise (Parsing_error str)
+
 	let chkMain cl =
 		let valid = (cl.cname = "Main") && (cl.classTypes = []) &&
-		(cl.cparams = []) && (fst (cl.extends.extType) = "Any") in
+		(cl.cparams = []) && (cl.extends = None) in
 		if not valid then
 			raise (Ast.Parsing_error "Expected main class.")
 	let processInt str isNeg =
@@ -22,6 +25,8 @@
 						str^"."))
 		in
 		process 0 0
+	
+	let emptyType = "Unit",EmptyAType
 
 %}
 
@@ -52,35 +57,85 @@
 %left Tdot
 
 %start prgm
-//%type <Ast.prgm> prgm
-%type <Ast.expr> prgm
+%type <Ast.prgm> prgm
 
 %%
 
 
-prgm: /* TEMP */
-| e = expr ; Teof							{ e }
-/*
-prog:
-| cl=class* ; mcl=classMain ; Teof			{ { classes = cl ; main = mcl}}
+prgm:
+| cl=classDef* ; mcl=classMain ; Teof		{ { classes = cl ; main = mcl}}
 ;
 
 classMain:
 	KW_OBJECT ; id=Tident ; Tlbra ;
 	dec = separated_list(Tsemicolon, decl) ; Trbra
-		{ if id = "Main" then { name = id ; classTypes=[]; params=[];
-								extends = [] ; body = dec }
-		  else raise (ParsingError ("Expected object named Main, got "^id^"."))
+		{ if id = "Main" then { cname = id ; classTypes=[]; cparams=[];
+								extends = None ; cbody = dec }
+		  else raise (Parsing_error ("Expected object named Main, got "^id^"."))
 		}
 			
 ;
 
-class:
-	KW_CLASS ; name=Tident; parTC = separated_list(Tcomma, paramTypeClass) ;
+classExtends:
+	KW_EXTENDS ; t=typ ;
+	par = loption(delimited(
+		Tlpar,separated_list(Tcomma, expr),
+		Trpar))
+											{{ extType = t ; param = par }}
+;
 
+classDef:
+	KW_CLASS ; name=Tident;
+	parTC=loption(delimited(
+		Tlbracket,
+		separated_nonempty_list(Tcomma, param_type_class),
+		Trbracket)) ;
+	param=loption(delimited(
+		Tlpar,
+		separated_list(Tcomma, param),
+		Trpar)) ;
+	ext = option(classExtends) ;
+	Tlbra ;
+	dec = separated_list(Tsemicolon, decl) ;
+	Trbra
+											{ {
+												cname = name ;
+												classTypes = parTC ;
+												cparams = param ;
+												extends = ext ;
+												cbody = dec }
+											}
+;
 
-decl:;
-*/
+decl:
+| v = var											{ Dvar(v) }
+| m = methodDef										{ Dmeth(m) }
+;
+
+method_proto:
+| ovrd=boption(KW_OVERRIDE) ; KW_DEF ; id=Tident ;
+	pt=loption(delimited(Tlbracket,
+		separated_nonempty_list(Tcomma,param_type),
+		Trbracket)) ;
+	Tlpar ; par=separated_list(Tcomma, param) ; Trpar
+									{ {mname = id ; parTypes = pt ;
+										mparams = par ;
+										retType=emptyType ; 
+										mbody=[] ;
+										override=ovrd} }
+;
+
+methodDef:
+| mth=method_proto ; bl=expr				{ match bl with
+												| Eblock(b) -> 
+													{ mth with mbody=b }
+												| _ -> raise (Parsing_error
+													"Block expected.")
+											}
+| mth=method_proto ; Tcolon ; t=typ ;
+	Tequal ; exp=expr						{{ mth with retType=t;
+												mbody=[Bexpr(exp)] }}
+;
 
 expr:
 /*
@@ -93,6 +148,7 @@ expr:
 | Tlpar ; Trpar										{ Eunit }
 | KW_THIS											{ Ethis }
 | KW_NULL											{ Enull }
+| Tlpar ; e = expr ; Trpar							{ e }
 | ac = access ; Tequal ; e = expr					{ Eassign(ac,e) }
 | ac = access										{ Eaccess(ac) }
 | ac = access ; a = argTypes ; Tlpar ;
@@ -148,6 +204,23 @@ typ:
 | Tmod			{ Mod }
 | Tland			{ Land }
 | Tlor			{ Lor }
+;
+
+param:
+| id=Tident ; Tcolon ; t=typ			{ (id,t) }
+;
+
+param_type:
+| id=Tident ; Tsubtype ; t=typ			{ { name=id; rel=SubclassOf; oth=t} }
+| id=Tident ; Tsupertype; t=typ			{ { name=id; rel=SuperclassOf; oth=t} }
+| id=Tident								{ { name=id; rel=NoClassRel;
+											oth=emptyType} }
+;
+
+param_type_class:
+| Tplus ; pt=param_type					{ (pt,TMplus) }
+| Tminus; pt=param_type					{ (pt,TMminus) }
+| pt=param_type							{ (pt,TMneutral) }
 ;
 
 blockval:

@@ -7,7 +7,7 @@
  * It is developped as a school project for J-C. Filliâtre's Compilation course
  * at the Ecole Normale Superieure, Paris.
  ******************************************************************************
- * File: ast.ml
+ * File: ast.mli
  *
  * Defines the AST type for Petit Scala
  *****************************************************************************)
@@ -68,12 +68,12 @@ and meth = {
 }
 and classExtends = {
 	extType : typ ;
-	param : parameter list }
+	param : expr list }
 and classDef = {
 	cname : ident ;
 	classTypes : paramTypeClass list ;
 	cparams : parameter list ;
-	extends : classExtends ; 
+	extends : classExtends option; 
 	cbody : decl list
 }
 
@@ -83,7 +83,7 @@ and parameter = ident * typ
 and paramType = {
 	name : ident ;
 	rel : classInclRelation ;
-	oth : ident
+	oth : typ
 }
 
 and paramTypeModifier = TMplus | TMminus | TMneutral

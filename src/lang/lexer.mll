@@ -92,7 +92,7 @@ rule token = parse
 | "&&"				{ Tland }
 | "||"				{ Tlor }
 | '.'				{ Tdot }
-| "//"_*'\n'		{ newline lexbuf ; token lexbuf }
+| "//" [^'\n']*'\n'	{ newline lexbuf ; token lexbuf }
 | "/*"				{ comment lexbuf }
 | ('0' | ['1'-'9'] digit*) as nums				{ Tint (nums) }
 	(* Keep it as a string: the parser will be able to check if neg or pos *)
