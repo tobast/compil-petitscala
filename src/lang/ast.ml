@@ -68,7 +68,8 @@ and meth = {
 	mparams : parameter list ;
 	retType : typ ;
 	mbody : block ;
-	override : bool
+	override : bool ;
+	mLoc : codeLoc
 }
 and classExtends = {
 	extType : typ ;
@@ -78,7 +79,8 @@ and classDef = {
 	classTypes : paramTypeClass list ;
 	cparams : parameter list ;
 	extends : classExtends option; 
-	cbody : decl list
+	cbody : decl list ;
+	cLoc : codeLoc
 }
 
 and decl = Dvar of var | Dmeth of meth

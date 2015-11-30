@@ -55,7 +55,7 @@ let () =
 		eprintf "%sSyntax error.\n@?" loc;
 		exit 1
 	) in
-	close_in sourceHandle ; (*
+	close_in sourceHandle (* ;
 	AstPrinter.print_expr Format.std_formatter ast;
 	print_newline () *)
 

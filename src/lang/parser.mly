@@ -73,7 +73,8 @@ classMain:
 	KW_OBJECT ; id=Tident ; Tlbra ;
 	dec = separated_list(Tsemicolon, decl) ; Trbra
 		{ if id = "Main" then { cname = id ; classTypes=[]; cparams=[];
-								extends = None ; cbody = dec }
+								extends = None ; cbody = dec ;
+								cLoc = {loc_beg=$startpos ; loc_end=$endpos} }
 		  else raise (Parsing_error ("Expected object named Main, got "^id^"."))
 		}
 			
@@ -106,8 +107,10 @@ classDef:
 												classTypes = parTC ;
 												cparams = param ;
 												extends = ext ;
-												cbody = dec }
-											}
+												cbody = dec ;
+												cLoc = { loc_beg=$startpos ;
+														loc_end=$endpos }
+											} }
 ;
 
 decl:
@@ -125,19 +128,25 @@ method_proto:
 										mparams = par ;
 										retType=emptyType ; 
 										mbody=[] ;
-										override=ovrd} }
+										override=ovrd ;
+										mLoc = { loc_beg=$startpos ;
+												loc_end=$startpos } } }
 ;
 
 methodDef:
 | mth=method_proto ; bl=expr				{ match bl.ex with
 												| Eblock(b) -> 
-													{ mth with mbody=b }
+													{ mth with mbody=b ;
+													 mLoc = {loc_beg=$startpos;
+														loc_end = $endpos } }
 												| _ -> raise (Parsing_error
 													"Block expected.")
 											}
 | mth=method_proto ; Tcolon ; t=typ ;
 	Tequal ; exp=expr						{{ mth with retType=t;
-												mbody=[Bexpr(exp)] }}
+												mbody=[Bexpr(exp)] ;
+												mLoc = {loc_beg=$startpos;
+														loc_end=$endpos}}}
 ;
 
 expr:
