@@ -16,6 +16,8 @@
 parser files *)
 exception Parsing_error of string
 
+type codeLoc = { loc_beg : Lexing.position ; loc_end : Lexing.position }
+
 type ident = string
 
 type unaryOp = UnaryNot | UnaryMinus
@@ -28,7 +30,9 @@ type access =
 | AccIdent of ident
 | AccMember of expr * ident
 
-and expr =
+and expr = { ex : exprVal ; eloc : codeLoc }
+
+and exprVal =
 | Eint of int
 | Estr of string
 | Ebool of bool

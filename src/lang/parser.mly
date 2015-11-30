@@ -4,6 +4,9 @@
 	let parse_error str =
 		raise (Parsing_error str)
 
+	let dummyLoc ex pos = { ex = ex ; eloc = {
+							loc_beg = pos ; loc_end = pos } }
+
 	let chkMain cl =
 		let valid = (cl.cname = "Main") && (cl.classTypes = []) &&
 		(cl.cparams = []) && (cl.extends = None) in
@@ -126,7 +129,7 @@ method_proto:
 ;
 
 methodDef:
-| mth=method_proto ; bl=expr				{ match bl with
+| mth=method_proto ; bl=expr				{ match bl.ex with
 												| Eblock(b) -> 
 													{ mth with mbody=b }
 												| _ -> raise (Parsing_error
@@ -138,6 +141,12 @@ methodDef:
 ;
 
 expr:
+| t = exprVal						{ { ex = t ; eloc = {
+													loc_beg = $startpos; 
+													loc_end = $endpos} } }
+;
+
+exprVal:
 /*
 | Tminus ; n = Tint			%prec Tuminus			{ Eint(processInt n true)}
 */
@@ -148,7 +157,7 @@ expr:
 | Tlpar ; Trpar										{ Eunit }
 | KW_THIS											{ Ethis }
 | KW_NULL											{ Enull }
-| Tlpar ; e = expr ; Trpar							{ e }
+| Tlpar ; e = exprVal ; Trpar							{ e }
 | ac = access ; Tequal ; e = expr					{ Eassign(ac,e) }
 | ac = access										{ Eaccess(ac) }
 | ac = access ; a = argTypes ; Tlpar ;
@@ -162,11 +171,13 @@ expr:
 	ibody = expr ; KW_ELSE ; ebody = expr
 							%prec KW_IF				{ Eif(cnd,ibody,ebody) }
 | KW_IF ; Tlpar ; cnd = expr ; Trpar ;
-	ibody = expr			%prec KW_IF				{Eif(cnd,ibody,Eblock([]))}
+	ibody = expr			%prec KW_IF				{Eif(cnd,ibody, dummyLoc
+														(Eblock([])) $endpos)}
 | KW_WHILE ; Tlpar ; cnd = expr ; Trpar ;
 	body = expr				%prec KW_WHILE			{ Ewhile(cnd, body) }
 | KW_RETURN ; e = expr								{ Ereturn(e) }
-| KW_RETURN											{ Ereturn(Eunit) }
+| KW_RETURN											{ Ereturn(dummyLoc
+															Eunit $endpos) }
 | KW_PRINT ; Tlpar ; e = expr ; Trpar				{ Eprint(e) }
 | Tlbra ;
 	e = separated_list(Tsemicolon, blockval) ;

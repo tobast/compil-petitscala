@@ -14,7 +14,10 @@
 
 open Ast
 open Format
+open Lexing
 
+let printPos ppf pos =
+	fprintf ppf "%d:%d" (pos.pos_lnum) (pos.pos_cnum)
 
 let strOfUnaryOp = function
 | UnaryNot -> "!"
@@ -70,7 +73,9 @@ let rec print_expr ppf  exp=
 		fprintf ppf "{ %a }" print_block blk
 	in
 
-	fprintf ppf "(" ; doPrint exp ; fprintf ppf ")"
+	fprintf ppf "[%a](" printPos exp.eloc.loc_beg;
+	doPrint exp.ex ;
+	fprintf ppf ")[%a]" printPos exp.eloc.loc_end
 
 and printExpList ppf = function
 | [] -> ()
