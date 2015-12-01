@@ -31,6 +31,7 @@ type access =
 | AccMember of expr * ident
 
 and expr = { ex : exprVal ; eloc : codeLoc }
+and typedExpr = { tex : exprVal ; etyp : typ }
 
 and exprVal =
 | Eint of int
@@ -95,8 +96,10 @@ and paramType = {
 and paramTypeModifier = TMplus | TMminus | TMneutral
 and paramTypeClass = paramType * paramTypeModifier
 
+module SMap = Map.Make(String)
+
 type prgm = {
-	classes : classDef list ;
+	classes : classDef SMap.t ;
 	main : classDef
 }
 

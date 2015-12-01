@@ -31,6 +31,9 @@
 	
 	let emptyType = "Unit",EmptyAType
 
+	let mapOfClassList l =
+		List.fold_left (fun cur elem -> SMap.add elem.cname elem cur)
+			SMap.empty l
 %}
 
 %token KW_CLASS KW_DEF KW_ELSE KW_EQ KW_EXTENDS KW_FALSE KW_IF KW_NE
@@ -66,7 +69,8 @@
 
 
 prgm:
-| cl=classDef* ; mcl=classMain ; Teof		{ { classes = cl ; main = mcl}}
+| cl=classDef* ; mcl=classMain ; Teof		{ { classes = mapOfClassList cl ;
+												main = mcl}}
 ;
 
 classMain:
