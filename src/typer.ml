@@ -13,15 +13,21 @@
  *****************************************************************************)
 
 open Ast
+open Lexing
 open Typedefs
 
 exception InternalError of string
 exception TyperError of codeLoc * string
 
-let findClass cl env =
+let classExists env clName refLoc =
+	if not (SMap.mem clName env.classes) then
+		raise (TyperError (refLoc, "The class `"^clName^"' referenced here "^
+			"is not defined."))
+
+let findClass cl env reqLoc =
 	try SMap.find cl env.classes
-	with Not_found -> raise (InternalError ("Class "^cl^" was not found in "^
-		"the environment, yet the program was previously checked."))
+	with Not_found -> raise (TyperError (reqLoc, "Class "^cl^", requested "^
+		"from here, was not found in the environment."))
 
 let rec dispType ty =
 	(fst ty)^
@@ -30,6 +36,10 @@ let rec dispType ty =
 		"["^(List.fold_left (fun cur ty -> cur^","^(dispType ty))
 			(dispType hd) tl)^"]"
 	| _ -> "")
+
+let dummyLoc =
+	let l=({pos_fname=""; pos_lnum=0; pos_bol=0; pos_cnum=0} : Lexing.position)
+	in {loc_beg=l ; loc_end=l}
 
 (***
  * Raises a TyperError exception indicating that expType was expected instead
@@ -49,21 +59,37 @@ let getInheritedType cl = match cl.textends with
  * the class `fst clTyp', with the real type obtained by substituting every
  * local type by its type passed as argument of `clTyp'
  ***)
-let substClassTypes env clTyp genericType =
+let substClassTypes env clTyp loc genericType =
 	match snd clTyp with
 	| EmptyAType -> genericType
 	| ArgType(clParams) ->
-		let classDef = findClass (fst clTyp) env in
+		let classDef = findClass (fst clTyp) env loc in
 		let rec doSubst clTy par = match (clTy,par) with
 		| [],[] -> genericType
-		| [],_ | _,[] -> raise (InternalError ("Class "^(fst clTyp)^" was "^
-			"passed more/less types than expected, yet was previously "^
-			"accepted."))
+		| [],_ | _,[] -> raise (TyperError (loc, "Class "^(fst clTyp)^" was "^
+			"passed more/less types than expected."))
 		| (fpar::_, rpar::_) when (fst genericType = (fst fpar).name) -> rpar
 		| _::ftl, _::rtl -> doSubst ftl rtl
 		in
 		doSubst classDef.tclassTypes clParams
 
+(***
+ * Replaces the type `genericType', which may contain parameter types from
+ * the method `meth', with the real type obtained by substituting every
+ * local type by its type passed as argument of `meth' in `argTy'
+ ***)
+let substMethTypes env meth argTy loc genericType =
+	match argTy with
+	| EmptyAType -> genericType
+	| ArgType(methPar) ->
+		let rec doSubst methPa par = match (methPa,par) with
+		| [],[] -> genericType
+		| [],_|_,[] -> raise (TyperError (loc, "Method "^(meth.mname)^" was "^
+			"passed more/less types than expected."))
+		| (fpar::_,rpar::_) when (fst genericType = fpar.name) -> rpar
+		| _::ftl,_::rtl -> doSubst ftl rtl
+		in
+		doSubst meth.parTypes methPar
 
 let addSuptypeDecl env tname ty =
 	let cList = (try SMap.find tname env.suptypeDecl with Not_found -> []) in
@@ -98,23 +124,28 @@ let rec isArrow env cl1 cl2 =
 		("AnyRef", "Any")
 	]  in
 
-	let userDefined cl = List.mem cl baseClasses in
+	let userDefined cl = not( List.mem cl baseClasses) in
 	let arrowOf cl =
 		if userDefined cl then
-			let clDef = findClass cl env in
+			let clDef = (try findClass cl env dummyLoc
+				with TyperError(_) -> 
+					raise (InternalError ("Requested arrow of nonexistent "^
+						"class "^cl^"."))) in
 			(match clDef.textends with
 			| None -> "AnyRef"
 			| Some cl -> fst cl.extType)
 
 		else
 			let elem =  (try List.find (fun k -> fst k = cl) baseArrows
-				with Not_found -> assert false (* Unreachable? *))
+				with Not_found ->
+					raise (InternalError ("Couldn't find "^cl^
+						" in base arrows.")))
 			in snd elem
 	in
 
 	if cl1 = cl2 then (* The arrow relation is reflexive *)
 		true
-	else if userDefined cl1 then begin (* cl1 is NOT user-defined *)
+	else if not (userDefined cl1) then begin (* cl1 is NOT user-defined *)
 		if cl1 = "Nothing" then
 			true
 		else if cl1 = "Any" then
@@ -130,7 +161,7 @@ let rec isArrow env cl1 cl2 =
 (***
  * Checks that ty1 is a subtype of ty2 in the environment env
  ***)
-let rec isSubtype env ty1 ty2 =
+let rec isSubtype env ty1 loc1 ty2 =
 	if fst ty1 = "Nothing" then (* Nothing -> every other class *)
 		true
 	else if (fst ty1 = "Null") && (isArrow env "Null" (fst ty2)) then
@@ -148,8 +179,8 @@ let rec isSubtype env ty1 ty2 =
 				" argument types."))
 		| fhd::ftl, pty1::l1tl, pty2::l2tl  ->
 			let cParam = (match snd fhd with
-			| TMplus -> isSubtype env pty1 pty2
-			| TMminus -> isSubtype env pty2 pty1
+			| TMplus -> isSubtype env pty1 loc1 pty2
+			| TMminus -> isSubtype env pty2 loc1 pty1
 			| TMneutral -> pty1 = pty2
 			) in
 			if cParam
@@ -162,40 +193,46 @@ let rec isSubtype env ty1 ty2 =
 			raise (InternalError ("Encountered types with not enough/too much"^
 				" argument types."))
 		| ArgType tl1, ArgType tl2 ->
-			chkVariance (findClass (fst ty1) env).tclassTypes tl1 tl2
+			chkVariance (findClass (fst ty1) env loc1).tclassTypes tl1 tl2
 		)
 	else if (not (isArrow env (fst ty1) (fst ty2))) then
 		(* If C1 -/-> C2 *)
 		try
 			let suptyps = SMap.find (fst ty2) env.suptypeDecl in
-			let _ = List.find (fun ty -> isSubtype env ty1 ty) suptyps in
+			let _ = List.find (fun ty -> isSubtype env ty1 loc1 ty) suptyps in
 			true
 		with Not_found ->
 			false
 	else (* If C1 extends C[..], C -> C2 *)
-		let extCl = (match (findClass (fst ty1) env).textends with
+		let extCl = (match (findClass (fst ty1) env loc1).textends with
 			| None -> { extType = ("AnyRef",EmptyAType) ; param = [] }
 			| Some t -> t) in
 		let extName = fst (extCl.extType) in
 		if isArrow env extName (fst ty2) then begin
 			match (snd extCl.extType) with
-			| EmptyAType -> isSubtype env extCl.extType ty2
+			| EmptyAType -> isSubtype env extCl.extType loc1 ty2
 			| ArgType(at1) ->
 				let typlist = List.rev (List.fold_left
 					(fun cur ex -> (exprType env ex)::cur) [] extCl.param) in
 				let nty1 = (extName, ArgType typlist) in
-				isSubtype env nty1 ty2
+				isSubtype env nty1 loc1 ty2
 		end else
 			false
+
 (***
- * Returns the varType of a Ast.var in order to allow easy insertion into the
- * environment map
+ * Checks that the type `ty' is well formed in the environment `env'. If not,
+ * raises a TyperError at location `loc'.
  ***)
 and checkWellFormed env ty loc =
 	if false then
 		raise (TyperError (loc, ("This expression has ill-formed type "^
 			(dispType ty)^".")))
+	(*TODO*)
 
+(***
+ * Returns the varType of a Ast.var in order to allow easy insertion into the
+ * environment map
+ ***)
 and varValue env varStmt =
 	let mutbl = (match varStmt.v with
 		| Vvar(_) -> true
@@ -204,7 +241,7 @@ and varValue env varStmt =
 	| Vvar(id,Type(ty),defExp) | Vval(id,Type(ty),defExp) ->
 		let expTyp = exprType env defExp in
 		checkWellFormed env ty varStmt.vloc;
-		if isSubtype env expTyp ty then
+		if isSubtype env expTyp (defExp.eloc) ty then
 			(mutbl, ty)
 		else
 			raise (TyperError (defExp.eloc, ("This expression was declared a "^
@@ -220,7 +257,7 @@ and isMutable env acc loc = match acc with
 	with Not_found -> isMutable env (AccMember({ex=Ethis;eloc=loc},id)) loc)
 | AccMember(exp,id) ->
 	let expTyp = exprType env exp in
-	let cl = findClass (fst expTyp) env in
+	let cl = findClass (fst expTyp) env (exp.eloc) in
 	(try fst (SMap.find id (cl.tcvars))
 	with Not_found -> raise (TyperError (exp.eloc, ("Variable `"^id^"' was "^
 		"not declared in this scope."))))
@@ -241,8 +278,9 @@ and exprType env exp = match exp.ex with
 		exprType env {ex=Eaccess(AccMember(
 						{ex=Ethis;eloc=exp.eloc},id)) ;
 					  eloc=exp.eloc })
-| Eaccess(AccMember(exp,id)) ->
-	let subTyp = exprType env exp in
+| Eaccess(AccMember(aexp,id)) ->
+	let subTyp = exprType env aexp in
+	(*
 	let rec findMemberType clTyp =
 		let cl = findClass (fst clTyp) env in
 		(try 
@@ -260,14 +298,21 @@ and exprType env exp = match exp.ex with
 						(exprType env sExp)) (inherTyp.param))))
 		)
 	in
-	findMemberType subTyp
+	findMemberType subTyp *)
+
+	classExists env (fst subTyp) aexp.eloc;
+	let cl = findClass (fst subTyp) env (aexp.eloc) in
+	(try substClassTypes env subTyp aexp.eloc (snd (SMap.find id cl.tcvars))
+	with Not_found ->
+		raise (TyperError (exp.eloc,("Variable `"^(fst subTyp)^"."^id^"' was "^
+			"not declared in this scope."))))
 | Eassign(acc, assignExp) ->
 	if not (isMutable env acc (exp.eloc)) then
 		raise (TyperError (exp.eloc, ("Illegaly assigning the read-only "^
 			"value "^(match acc with AccIdent(x)|AccMember(_,x) -> x)^".")));
 	let vTy = exprType env {ex=Eaccess(acc) ; eloc=exp.eloc} in
 	let eTy = exprType env assignExp in
-	if isSubtype env eTy vTy then
+	if isSubtype env eTy (assignExp.eloc) vTy then
 		("Unit", EmptyAType)
 	else
 		raise (TyperError (assignExp.eloc, ("This expression has type "^
@@ -276,40 +321,63 @@ and exprType env exp = match exp.ex with
 
 | Einstantiate(id,argt,params) ->
 	checkWellFormed env (id,argt) exp.eloc ;
-	let cl = findClass id env in
+	let cl = findClass id env exp.eloc in
 	let rec checkPar formal par = match (formal,par) with
 	| [],[] -> ()
 	| _,[]|[],_ -> raise (TyperError (exp.eloc, ("Got more/less parameters "^
 		"than expected while constructing "^id^".")))
 	| fHd::fTl, pHd::pTl ->
 		let tpHd = exprType env pHd in
-		if isSubtype env tpHd fHd then
+		if isSubtype env tpHd (pHd).eloc fHd then
 			checkPar fTl pTl
 		else
 			wrongTypeError (pHd.eloc) fHd tpHd
 	in
-	checkPar (List.map (substClassTypes env (id,argt))
+	checkPar (List.map (substClassTypes env (id,argt) exp.eloc)
 		(List.map snd cl.tcparams)) params ;
 	(id,argt)
 
 | Ecall(acc, argt, params) ->
-	(*
-	let tAcc = exprType env acc in
-	(match argt with EmptyAType -> () 
+	(match argt with
+	| EmptyAType -> () 
 	| ArgType(at) -> List.iter (fun k -> checkWellFormed env k exp.eloc) at);
 	
+	let classType, methName, accLoc = (match acc with
+		| AccIdent(id) -> (exprType env {ex=Ethis;eloc=exp.eloc}, id, exp.eloc)
+		| AccMember(clExp,id) -> (exprType env clExp, id, clExp.eloc)
+		) in
+
+	if not (SMap.mem (fst classType) (env.classes)) then
+		raise (TyperError (exp.eloc, "No class "^(fst classType)^
+			"was previously defined in method call."));
+	
+	let cl = findClass (fst classType) env accLoc in
+	
+	let meth = (try SMap.find methName cl.tcmeth
+		with Not_found ->
+			raise (TyperError (exp.eloc, "Class "^(cl.tcname)^" has no such "^
+				"method "^methName^"."))) in
+	
+	let substTypes ty = 
+		substClassTypes env classType exp.eloc
+			(substMethTypes env meth argt exp.eloc ty) in
+	(*TODO check sigma o sigma' well formed *)
+
 	let rec checkArgs formal pars = match (formal,pars) with
 	| [],[] -> ()
-	| _,[]|[],_ -> raise (TyperError (expr.eloc, ("Got more/less parameters "^
+	| _,[]|[],_ -> raise (TyperError (exp.eloc, ("Got more/less parameters "^
 		"than expected while calling method.")))
 	| fHd::fTl, pHd::pTl ->
-		assert false
-		(*
-		let fTyp = substClassTypes env clTyp (substMethTypes env tAcc fHd*)
-		(*TODO*)
+		let parTyp = exprType env pHd in
+		let fmethTyp = substTypes (snd fHd) in
+
+		if not (isSubtype env parTyp exp.eloc fmethTyp) then
+			wrongTypeError pHd.eloc parTyp fmethTyp
 	in
-	*)
-	assert false
+	checkArgs meth.mparams params ;
+	
+	substTypes meth.retType
+(*substMethTypes env meth argt (substClassTypes env classType meth.retType)*)
 			
 | Eunaryop(UnaryNot, ex) ->
 	let exTyp = exprType env ex in
@@ -327,9 +395,9 @@ and exprType env exp = match exp.ex with
 	let tex1 = exprType env ex1 and tex2 = exprType env ex2 in
 	(match op with
 	| KwEqual | KwNEqual ->
-		if not (isSubtype env tex1 ("AnyRef",EmptyAType)) then
+		if not (isSubtype env tex1 ex1.eloc ("AnyRef",EmptyAType)) then
 			wrongTypeError ex1.eloc tex1 ("AnyRef",EmptyAType)
-		else if not (isSubtype env tex2 ("AnyRef",EmptyAType)) then
+		else if not (isSubtype env tex2 ex2.eloc ("AnyRef",EmptyAType)) then
 			wrongTypeError ex2.eloc tex2 ("AnyRef",EmptyAType)
 		else
 			("Boolean", EmptyAType)
@@ -366,9 +434,9 @@ and exprType env exp = match exp.ex with
 	and tElse = exprType env exElse in
 	if fst tCnd <> "Boolean" then
 		wrongTypeError cnd.eloc tCnd ("Boolean", EmptyAType)
-	else if isSubtype env tIf tElse then
+	else if isSubtype env tIf exIf.eloc tElse then
 		tElse
-	else if isSubtype env tElse tIf then
+	else if isSubtype env tElse exElse.eloc tIf then
 		tIf
 	else
 		raise (TyperError (exp.eloc,("If statement has type "^(dispType tIf)^
@@ -384,7 +452,7 @@ and exprType env exp = match exp.ex with
 	let tEx = exprType env ex in
 	let retTyp = (try snd (SMap.find "_return" env.vars)
 		with Not_found -> raise (InternalError "Undefined special _return")) in
-	if isSubtype env tEx retTyp then
+	if isSubtype env tEx ex.eloc retTyp then
 		("Nothing", EmptyAType)
 	else
 		wrongTypeError ex.eloc retTyp tEx
@@ -421,7 +489,7 @@ let doClassTyping env cl =
 					"this scope."))) in
 
 		let outCl = ref cl in
-		let substTyp = substClassTypes env supertype in
+		let substTyp = substClassTypes env supertype clLoc in
 		SMap.iter (fun key field ->
 				outCl := classAddVar !outCl key (fst field,
 					(substTyp (snd field))))
@@ -565,7 +633,7 @@ let doClassTyping env cl =
 
 				(* return type *)
 				if not (isSubtype (curEnv !nEnv)
-						methDecl.retType supermeth.retType) then
+						methDecl.retType methDecl.mLoc supermeth.retType) then
 					raise (TyperError (methDecl.mLoc, ("This overriding "^
 						"method's return type "^(dispType methDecl.retType)^
 						" is not a subtype of "^(dispType supermeth.retType)^
@@ -582,15 +650,44 @@ let doClassTyping env cl =
 			(* Effectively adding the method, check type *)
 			nClass := addMeth !nClass methDecl.mname methDecl ;
 			let bodyTyp = exprType (curEnv !locEnv) methDecl.mbody in
-			if not (isSubtype (curEnv !nEnv) bodyTyp methDecl.retType) then
+			if not (isSubtype (curEnv !nEnv) bodyTyp
+					methDecl.mbody.eloc methDecl.retType) then
 				wrongTypeError methDecl.mbody.eloc bodyTyp methDecl.retType
 		)
 		cl.cbody;
 	(curEnv !nEnv)
 
 let doPrgmTyping (prgm : Ast.prgm) =
+	let smap_of_list l =
+		List.fold_left (fun cur (id,v) -> SMap.add id v cur) SMap.empty l in
+	let mkBaseClass (name,inher) =
+		(name, { tcname=name ; tclassTypes=[] ; tcparams=[] ;
+				 textends=
+				 	if inher <> "" then Some
+						{ extType=(inher,EmptyAType) ; param=[] }
+					else None ;
+				 tcbody=[] ; tcvars=SMap.empty ; tcmeth=SMap.empty } )
+	in
+	let baseClasses = smap_of_list (List.map mkBaseClass [
+			"Nothing",	"";
+			"Null",		"";
+			"Unit",		"AnyVal";
+			"Int",		"AnyVal";
+			"Boolean",	"AnyVal";
+			"String",	"AnyRef";
+			"AnyVal",	"Any";
+			"AnyRef",	"Any";
+			"Any",		""
+		]) in
+	(* Add Array. We consider it to be user-defined, would be a hell of a mess
+	  otherwise. *)
+	let baseClasses = SMap.add "Array"
+		{ (snd (mkBaseClass ("Array","AnyRef"))) with
+			tclassTypes = [( {name="ty";rel=NoClassRel;oth=("",EmptyAType)},
+					TMneutral )]
+		} baseClasses in
 	let env = ref { suptypeDecl = SMap.empty ;
-		classes = SMap.empty ;
+		classes = baseClasses ;
 		vars = SMap.empty } in
 
 	List.iter

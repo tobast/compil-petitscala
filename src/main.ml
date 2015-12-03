@@ -74,6 +74,6 @@ let () =
 			eprintf "Typer internal error: %s\n@?" msg ;
 			exit 2
 		| ex ->
-			eprintf "Unknown internal error during typing: %s\n@?"
-				(Printexc.to_string ex);
+			eprintf "Unknown internal error during typing: %s\nBacktrace:\n%s@?"
+				(Printexc.to_string ex) (Printexc.get_backtrace ());
 			exit 2)
