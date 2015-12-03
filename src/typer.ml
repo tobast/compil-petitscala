@@ -42,6 +42,21 @@ let dummyLoc =
 	in {loc_beg=l ; loc_end=l}
 
 (***
+ * Used to ensure that types/parameters/... have distinct names.
+ * Returns false iff each element is distinct from the others in l
+ ***)
+let rec hasDoubleElem l =
+	let rec appearsAhead e = function
+	| [] -> false
+	| hd::tl -> if hd = e then true else appearsAhead e tl
+	in
+
+	match l with
+	| [] -> false
+	| hd::tl -> if appearsAhead hd tl then true else hasDoubleElem tl
+	
+
+(***
  * Raises a TyperError exception indicating that expType was expected instead
  * of actType at location loc
  ***)
@@ -457,6 +472,15 @@ and exprType env exp = match exp.ex with
 	else
 		wrongTypeError ex.eloc retTyp tEx
 | Eblock(bl) ->
+	(* Check that variables are declared only once. *)
+	if hasDoubleElem (List.fold_left (fun cur decl -> match decl with
+			| Bvar(var) ->
+				let name = (match var.v with Vvar(x,_,_)|Vval(x,_,_) -> x) in
+				name::cur
+			| _ -> cur) [] bl) then
+		raise (TyperError (exp.eloc, "A field with the same name was declared"^
+			" twice in block."));
+
 	let rec blockType env = function
 	| [] -> ("Unit", EmptyAType)
 	| Bexpr(ex)::[] ->
@@ -539,7 +563,15 @@ let doClassTyping env cl =
 			parTyps
 	in
 
+	(* Check that the class was not previously defined. *)
+	if SMap.mem cl.cname env.classes then
+		raise (TyperError (cl.cLoc, "A class named "^cl.cname^" is "^
+			"already defined."));
+
 	(* Adding the T from [+/-/() T] to the environment *)
+	if hasDoubleElem (List.map (fun k -> (fst k).name) cl.classTypes) then
+		raise (TyperError (cl.cLoc, "The same name was used twice in the "^
+			"type parameters of this class."));
 	addParamType (List.map fst cl.classTypes) nEnv cl.cLoc;
 	
 	(* Inheritance *)
@@ -556,6 +588,14 @@ let doClassTyping env cl =
 		(match cl.extends with
 		| None -> nClass
 		| Some t ->
+			if List.mem (fst t.extType) ["Any";"AnyVal";"Unit";"Int";
+					"Boolean";"String";"Null";"Nothing"] then
+				raise (TyperError (cl.cLoc, "This class cannot inherit from "^
+					(fst t.extType)^", as it is a base type."))
+			else if not (SMap.mem (fst t.extType) env.classes) then
+				raise (TyperError (cl.cLoc, "This class cannot inherit from "^
+					(fst t.extType)^", as it is not defined."));
+
 			checkWellFormed !nEnv t.extType cl.cLoc; (*FIXME imprecise loc*)
 			inheritFromClass !nEnv nClass t.extType cl.cLoc
 		) in
@@ -564,6 +604,9 @@ let doClassTyping env cl =
 	in
 	
 	(* Parameters checking and adding *)
+	if hasDoubleElem (List.map fst cl.cparams) then
+		raise (TyperError (cl.cLoc, "The same name was used twice "^
+			"in the parameters of this class."));
 	List.iter (fun (idt,ty) ->
 			checkWellFormed (curEnv !nEnv) ty cl.cLoc (*FIXME imprecise loc*);
 			nClass := classAddVar !nClass idt (false,ty))
@@ -589,15 +632,35 @@ let doClassTyping env cl =
 					"constructor while declaring class "^cl.cname^".")))
 	);
 
-	(* Body *)
+	(*** Body ***)
+	(* Check that methods are uniquely defined *)
+	if hasDoubleElem (List.fold_left (fun cur v -> match v with
+			| Dmeth(meth) -> (meth.mname)::cur
+			| _ -> cur) [] cl.cbody) then
+		raise (TyperError (cl.cLoc, "The same name was used twice in the "^
+			"methods names of "^cl.cname^"."));
+				
 	List.iter (fun declare -> match declare with
 		| Dvar(varDecl) ->
 			let name = (match varDecl.v with Vvar(x,_,_) | Vval(x,_,_) -> x) in
 			let vt = varValue (curEnv !nEnv) varDecl in
+			if SMap.mem name !nClass.tcvars then
+				raise (TyperError (varDecl.vloc, "A field named "^
+					name^" was already declared in this class."));
 			nClass := { !nClass with tcvars=(SMap.add name vt !nClass.tcvars)}
 		| Dmeth(methDecl) ->
 			let locEnv = ref !nEnv in
+
+			(* Type parameters *)
+			if hasDoubleElem (List.map (fun k -> k.name) methDecl.parTypes) then
+				raise (TyperError (methDecl.mLoc, "The same name was used "^
+					"twice in the type parameters of this method."));
 			addParamType methDecl.parTypes locEnv methDecl.mLoc ;
+
+			(* Parameters *)
+			if hasDoubleElem (List.map fst methDecl.mparams) then
+				raise (TyperError (methDecl.mLoc, "The same name was used "^
+					"twice in the parameters of this method."));
 			List.iter (fun (idt,ty) ->
 					(*FIXME imprecise loc*)
 					checkWellFormed (curEnv !locEnv) ty methDecl.mLoc;
