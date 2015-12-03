@@ -95,7 +95,7 @@ and print_blockVal ppf = function
 | Bexpr(exp) -> print_expr ppf exp
 | Bvar(v) -> print_var ppf v
 
-and print_var ppf = function
+and print_var ppf v = match v.v with
 | Vvar(idt,ot,exp) ->
 	fprintf ppf "var %s%a = %a" idt print_optType ot print_expr exp
 | Vval(idt,ot,exp) -> 

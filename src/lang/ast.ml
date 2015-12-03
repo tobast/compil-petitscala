@@ -16,6 +16,8 @@
 parser files *)
 exception Parsing_error of string
 
+module SMap = Map.Make(String)
+
 type codeLoc = { loc_beg : Lexing.position ; loc_end : Lexing.position }
 
 type ident = string
@@ -55,7 +57,8 @@ and exprVal =
 and blockVal = Bexpr of expr | Bvar of var
 and block = blockVal list
 
-and var =
+and var = { v : varDef ; vloc : codeLoc }
+and varDef =
 | Vvar of ident * optType * expr
 | Vval of ident * optType * expr
 
@@ -63,12 +66,14 @@ and typ = ident * argType
 and optType = Type of typ | NoType
 and argType = EmptyAType | ArgType of typ list
 
+and varType = bool (* Mutable? *) * typ
+
 and meth = {
 	mname : ident ;
 	parTypes : paramType list ;
 	mparams : parameter list ;
 	retType : typ ;
-	mbody : block ;
+	mbody : expr ;
 	override : bool ;
 	mLoc : codeLoc
 }
@@ -83,6 +88,15 @@ and classDef = {
 	cbody : decl list ;
 	cLoc : codeLoc
 }
+and typedClass = {
+	tcname: ident ;
+	tclassTypes : paramTypeClass list ;
+	tcparams : parameter list ;
+	textends : classExtends option ;
+	tcbody : decl list ;
+	tcvars : varType SMap.t ;
+	tcmeth : meth SMap.t
+}
 
 and decl = Dvar of var | Dmeth of meth
 
@@ -96,10 +110,8 @@ and paramType = {
 and paramTypeModifier = TMplus | TMminus | TMneutral
 and paramTypeClass = paramType * paramTypeModifier
 
-module SMap = Map.Make(String)
-
 type prgm = {
-	classes : classDef SMap.t ;
+	classes : classDef (*SMap.t*) list ;
 	main : classDef
 }
 

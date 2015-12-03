@@ -69,7 +69,7 @@
 
 
 prgm:
-| cl=classDef* ; mcl=classMain ; Teof		{ { classes = mapOfClassList cl ;
+| cl=classDef* ; mcl=classMain ; Teof		{ { classes = (*mapOfClassList*)cl;
 												main = mcl}}
 ;
 
@@ -131,7 +131,9 @@ method_proto:
 									{ {mname = id ; parTypes = pt ;
 										mparams = par ;
 										retType=emptyType ; 
-										mbody=[] ;
+										mbody= { ex=Eblock([]) ;
+											eloc={loc_beg=$startpos;
+												loc_end=$endpos} } ;
 										override=ovrd ;
 										mLoc = { loc_beg=$startpos ;
 												loc_end=$startpos } } }
@@ -140,7 +142,7 @@ method_proto:
 methodDef:
 | mth=method_proto ; bl=expr				{ match bl.ex with
 												| Eblock(b) -> 
-													{ mth with mbody=b ;
+													{ mth with mbody=bl ;
 													 mLoc = {loc_beg=$startpos;
 														loc_end = $endpos } }
 												| _ -> raise (Parsing_error
@@ -148,7 +150,7 @@ methodDef:
 											}
 | mth=method_proto ; Tcolon ; t=typ ;
 	Tequal ; exp=expr						{{ mth with retType=t;
-												mbody=[Bexpr(exp)] ;
+												mbody= exp ;
 												mLoc = {loc_beg=$startpos;
 														loc_end=$endpos}}}
 ;
@@ -253,11 +255,23 @@ blockval:
 ;
 
 var:
-| KW_VAR ; i = Tident ; Tequal ; e = expr			{ Vvar(i,NoType,e) }
+| KW_VAR ; i = Tident ; Tequal ; e = expr			{ { v = Vvar(i,NoType,e);
+														vloc =
+														 {loc_beg=$startpos ;
+														  loc_end=$endpos } } }
 | KW_VAR ; i = Tident ; Tcolon ; t = typ ;
-	Tequal ; e = expr								{ Vvar(i,Type(t),e) }
-| KW_VAL ; i = Tident ; Tequal ; e = expr			{ Vval(i,NoType,e) }
+	Tequal ; e = expr								{ { v = Vvar(i,Type(t),e) ;
+														vloc =
+														 {loc_beg=$startpos ;
+														  loc_end=$endpos } } }
+| KW_VAL ; i = Tident ; Tequal ; e = expr			{ { v = Vval(i,NoType,e) ;
+														vloc =
+														 {loc_beg=$startpos ;
+														  loc_end=$endpos } } }
 | KW_VAL ; i = Tident ; Tcolon ; t = typ ;
-	Tequal ; e = expr								{ Vval(i,Type(t),e) }
+	Tequal ; e = expr								{ { v = Vval(i,Type(t),e) ;
+														vloc =
+														 {loc_beg=$startpos ;
+														  loc_end=$endpos } } }
 ;
 
