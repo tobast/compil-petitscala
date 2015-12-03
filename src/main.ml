@@ -1,6 +1,12 @@
+open Ast
 open Format
 open Lexing
 
+let formatErrorLoc begLoc endLoc file =
+	let line = begLoc.pos_lnum in
+	let begC = begLoc.pos_cnum - begLoc.pos_bol + 1 in
+	let endC = endLoc.pos_cnum - endLoc.pos_bol + 1 in
+	sprintf "File \"%s\", line %d, characters %d-%d:\n" file line (begC-1) endC
 
 let locateError pos file =
 	let l = pos.pos_lnum in 
@@ -55,7 +61,19 @@ let () =
 		eprintf "%sSyntax error.\n@?" loc;
 		exit 1
 	) in
-	close_in sourceHandle (* ;
-	AstPrinter.print_expr Format.std_formatter ast;
-	print_newline () *)
+	close_in sourceHandle ;
 
+	if not !parseOnly then
+		(try Typer.doPrgmTyping ast
+		with
+		| Typer.TyperError (pos, msg) ->
+			let loc = formatErrorLoc pos.loc_beg pos.loc_end !sourceFilePath in
+			eprintf "%sConsistency error: %s\n@?" loc msg;
+			exit 1
+		| Typer.InternalError msg ->
+			eprintf "Typer internal error: %s\n@?" msg ;
+			exit 2
+		| ex ->
+			eprintf "Unknown internal error during typing: %s\n@?"
+				(Printexc.to_string ex);
+			exit 2)

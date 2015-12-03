@@ -12,10 +12,8 @@
  * Declares types that will be useful all around in the code
  *****************************************************************************)
 
-type varType = Ast.access * bool * Ast.typ (* ident * mutable? * type *)
-
 type typingEnvironment = {
 	suptypeDecl : (Ast.typ list) Ast.SMap.t ;
-	classes : Ast.classDef Ast.SMap.t ;
-	vars : varType list
+	classes : Ast.typedClass Ast.SMap.t ;
+	vars : Ast.varType Ast.SMap.t
 }
