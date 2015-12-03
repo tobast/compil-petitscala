@@ -235,15 +235,46 @@ let rec isSubtype env ty1 loc1 ty2 =
 			false
 
 (***
+ * Checks that the substitution of type parameters formal -> real is
+ * well formed.
+ ***)
+and checkSubstWellFormed env formal real entity loc substFct =
+	match formal,real with
+	| [],[] -> ()
+	| [],_|_,[] -> raise (TyperError (loc,entity^" is passed "^
+		"more/less type parameters than expected."))
+	| fhd::ftl, rhd::rtl ->
+		(match fhd.rel with
+		| SubclassOf -> if not (isSubtype env rhd loc (substFct fhd.oth)) then
+			raise (TyperError (loc, "Ill-formed substitution: type "^
+				(dispType rhd)^" was expected to be subtype of "^
+				(dispType (substFct fhd.oth))^" in type parameters."))
+			
+		| SuperclassOf -> if not (isSubtype env (substFct fhd.oth) loc rhd) then
+			raise (TyperError (loc, "Ill-formed substitution: type "^
+				(dispType rhd)^" was expected to be supertype of "^
+				(dispType (substFct fhd.oth))^" in type parameters."))
+		| NoClassRel -> ()
+		);
+		checkSubstWellFormed env ftl rtl entity loc substFct
+		
+
+(***
  * Checks that the type `ty' is well formed in the environment `env'. If not,
  * raises a TyperError at location `loc'.
  ***)
 and checkWellFormed env ty loc =
-	if false then
-		raise (TyperError (loc, ("This expression has ill-formed type "^
-			(dispType ty)^".")))
-	(*TODO*)
+	let cl = findClass (fst ty) env loc in
+	(match (snd ty) with
+	| EmptyAType -> ()
+	| ArgType(t) ->
+		(* Check types recursively *)
+		List.iter (fun ti -> checkWellFormed env ti loc) t ;
 
+		(* Check bounds *)
+		checkSubstWellFormed env (List.map fst cl.tclassTypes) t cl.tcname loc
+			(substClassTypes env ty loc)
+	)
 (***
  * Returns the varType of a Ast.var in order to allow easy insertion into the
  * environment map
