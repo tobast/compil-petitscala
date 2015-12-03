@@ -18,7 +18,7 @@ for f in tests/typing/good/*.scala tests/exec/*.scala tests/exec-fail/*.scala; d
     ./pscala $f > out
 	case $? in
 		0) scorePos=`expr $scorePos + 1` ;;
-		1) echo "  ECHEC du parsing pour $f" ;;
+		1) echo "  ECHEC du typing pour $f" ;;
 		2) prgmFail=`expr $prgmFail + 1`;echo "  ECHEC du programme pour $f" ;;
     esac
 done
@@ -33,7 +33,7 @@ for f in tests/typing/bad/*.scala; do
 	./pscala $f > out 2>&1
 	
 	case $? in
-		0) echo "  ECHEC : le parsing de $f devrait échouer" ;;
+		0) echo "  ECHEC : le typing de $f devrait échouer" ;;
    		1) scoreNeg=`expr $scoreNeg + 1` ;;
 		2) prgmFail=`expr $prgmFail + 1`;echo "  ECHEC du programme pour $f" ;;
     esac
