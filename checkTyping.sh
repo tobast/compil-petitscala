@@ -11,7 +11,7 @@ prgmFail=0
 
 echo "Tests positifs (fichiers dans tests/good/)"
 
-for f in tests/syntax/good/*.scala tests/typing/good/*.scala tests/exec/*.scala tests/exec-fail/*.scala; do
+for f in tests/typing/good/*.scala tests/exec/*.scala tests/exec-fail/*.scala; do
     maxPos=`expr $maxPos + 1`;
     echo $f
     rm -f out
@@ -26,7 +26,7 @@ echo
 
 echo "Tests négatifs (fichiers dans tests/bad/)"
 
-for f in tests/syntax/bad/*.scala tests/typing/bad/*.scala; do
+for f in tests/typing/bad/*.scala; do
     maxNeg=`expr $maxNeg + 1`;
     echo $f
     rm -f out
