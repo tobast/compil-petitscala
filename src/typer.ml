@@ -466,7 +466,8 @@ and exprType env exp = match exp.ex with
 | Ereturn(ex) ->
 	let tEx = exprType env ex in
 	let retTyp = (try snd (SMap.find "_return" env.vars)
-		with Not_found -> raise (InternalError "Undefined special _return")) in
+		with Not_found -> raise (TyperError (exp.eloc, "Return statement "^
+			"outside of a method's body."))) in
 	if isSubtype env tEx ex.eloc retTyp then
 		("Nothing", EmptyAType)
 	else
