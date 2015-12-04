@@ -166,7 +166,7 @@ let rec isArrow env cl1 cl2 =
 		else if cl1 = "Any" then
 			false (* We have already checked that cl1 != cl2 *)
 		else if cl1 = "Null" then
-			cl2 = "String" || (userDefined cl2)
+			cl2 = "String" || (userDefined cl2) || (isArrow env "AnyRef" cl2)
 		else
 			(List.mem (cl1,cl2) baseArrows) || (isArrow env (arrowOf cl1) cl2)
 	end else (* cl1 IS user-defined *)
@@ -210,15 +210,7 @@ let rec isSubtype env ty1 loc1 ty2 =
 		| ArgType tl1, ArgType tl2 ->
 			chkVariance (findClass (fst ty1) env loc1).tclassTypes tl1 tl2
 		)
-	else if (not (isArrow env (fst ty1) (fst ty2))) then
-		(* If C1 -/-> C2 *)
-		try
-			let suptyps = SMap.find (fst ty2) env.suptypeDecl in
-			let _ = List.find (fun ty -> isSubtype env ty1 loc1 ty) suptyps in
-			true
-		with Not_found ->
-			false
-	else (* If C1 extends C[..], C -> C2 *)
+	else (* If C1 extends C[..], C -> C2 *) (
 		let extCl = (match (findClass (fst ty1) env loc1).textends with
 			| None -> { extType = ("AnyRef",EmptyAType) ; param = [] }
 			| Some t -> t) in
@@ -231,8 +223,19 @@ let rec isSubtype env ty1 loc1 ty2 =
 					(fun cur ex -> (exprType env ex)::cur) [] extCl.param) in
 				let nty1 = (extName, ArgType typlist) in
 				isSubtype env nty1 loc1 ty2
-		end else
-			false
+		end
+		else if (not (isArrow env (fst ty1) (fst ty2))) then (
+			(* If C1 -/-> C2 *)
+			try
+				let suptyps = SMap.find (fst ty2) env.suptypeDecl in
+				ignore
+					(List.find (fun ty -> isSubtype env ty1 loc1 ty) suptyps);
+				true
+			with Not_found ->
+				false)
+		else
+			false)
+
 
 (***
  * Checks that the substitution of type parameters formal -> real is
@@ -537,7 +540,7 @@ and exprType env exp = match exp.ex with
 let doClassTyping env cl =
 	let nEnv = ref env in
 
-	let inheritFromClass env (cl : typedClass) supertype clLoc =
+	let inheritFromClass env (cl : typedClass) supertype superParam clLoc =
 		let super = (try SMap.find (fst supertype) env.classes
 			with Not_found ->
 				raise (TyperError (clLoc, "The class `"^(fst supertype)^
@@ -565,14 +568,18 @@ let doClassTyping env cl =
 			which becomes thus invalid. We are *NOT* supposed to use it
 			anymore! *)
 
-		!outCl
+		{ !outCl with textends=Some {
+			extType = supertype ;
+				(* Maybe we'll do some more checks if needed on superParam*)
+			param = (match superParam with None -> [] | Some t -> t) }
+		}
 	in
 	
-	let addParamType parTyps envRef bestLoc (*FIXME imprecise loc*) =
+	let addParamType parTyps envRef alterEnv bestLoc (*FIXME imprecise loc*) =
 		List.iter (fun parTy ->
-				if parTy.rel <> NoClassRel then
+				if parTy.rel <> NoClassRel then (
 					let nTy = parTy.oth in
-					checkWellFormed env nTy bestLoc ;
+					checkWellFormed (alterEnv !envRef) nTy bestLoc );
 
 				let nClass = { tcname = (parTy.name) ;
 							   tclassTypes = [] ;
@@ -585,7 +592,8 @@ let doClassTyping env cl =
 				let nClass = 
 					(match parTy.rel with
 					| SubclassOf ->
-						inheritFromClass !envRef nClass parTy.oth bestLoc
+						inheritFromClass (alterEnv !envRef) nClass parTy.oth
+							None bestLoc
 					| SuperclassOf ->
 						envRef := addSuptypeDecl !envRef parTy.name parTy.oth ;
 						nClass
@@ -604,8 +612,8 @@ let doClassTyping env cl =
 	if hasDoubleElem (List.map (fun k -> (fst k).name) cl.classTypes) then
 		raise (TyperError (cl.cLoc, "The same name was used twice in the "^
 			"type parameters of this class."));
-	addParamType (List.map fst cl.classTypes) nEnv cl.cLoc;
-	
+	addParamType (List.map fst cl.classTypes) nEnv (fun k -> k ) cl.cLoc;
+
 	(* Inheritance *)
 	let nClass =
 		{tcname = cl.cname ;
@@ -629,7 +637,7 @@ let doClassTyping env cl =
 					(fst t.extType)^", as it is not defined."));
 
 			checkWellFormed !nEnv t.extType cl.cLoc; (*FIXME imprecise loc*)
-			inheritFromClass !nEnv nClass t.extType cl.cLoc
+			inheritFromClass !nEnv nClass t.extType (Some t.param) cl.cLoc
 		) in
 	let curEnv cenv =
 		addClass cenv (cl.cname) !nClass
@@ -687,7 +695,7 @@ let doClassTyping env cl =
 			if hasDoubleElem (List.map (fun k -> k.name) methDecl.parTypes) then
 				raise (TyperError (methDecl.mLoc, "The same name was used "^
 					"twice in the type parameters of this method."));
-			addParamType methDecl.parTypes locEnv methDecl.mLoc ;
+			addParamType methDecl.parTypes locEnv curEnv methDecl.mLoc ;
 
 			(* Parameters *)
 			if hasDoubleElem (List.map fst methDecl.mparams) then
@@ -745,7 +753,7 @@ let doClassTyping env cl =
 			(* Effectively adding the method, check type *)
 			nClass := addMeth !nClass methDecl.mname methDecl ;
 			let bodyTyp = exprType (curEnv !locEnv) methDecl.mbody in
-			if not (isSubtype (curEnv !nEnv) bodyTyp
+			if not (isSubtype (curEnv !locEnv) bodyTyp
 					methDecl.mbody.eloc methDecl.retType) then
 				wrongTypeError methDecl.mbody.eloc bodyTyp methDecl.retType
 		)
