@@ -20,22 +20,22 @@ class Cons[E](one: Boolean, e: E, s: RandomAccessList[Pair[E, E]])
 extends RandomAccessList[E] {
 
   override def length(): Int =
-    2 * this.s.length() + (if (one) 1 else 0);
+    2 * s.length() + (if (one) 1 else 0);
 
   override def get(i: Int) : E = {
     if (one) {
-      if (i == 0) return this.e;
-      var x: Pair[E, E] = this.s.get((i - 1) / 2);
+      if (i == 0) return e;
+      var x: Pair[E, E] = s.get((i - 1) / 2);
       if (i % 2 == 1) x.fst else x.snd
     } else {
-      var x: Pair[E, E] = this.s.get(i / 2);
+      var x: Pair[E, E] = s.get(i / 2);
       if (i % 2 == 0) x.fst else x.snd
     }
   };
 
   override def add[U >: E](x: U) : RandomAccessList[U] =
     if (one)
-      new Cons[U](false, x, this.s.add[Pair[U,U]](new Pair[U,U](x, this.e)))
+      new Cons[U](false, x, s.add[Pair[U,U]](new Pair[U,U](x, e)))
     else
       new Cons[U](true, x, s)
 

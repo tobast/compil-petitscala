@@ -1,5 +1,0 @@
-A scala source file must end with ".scala".
-Usage: pscala [options] sourceFile.scala
-  --parse-only Stop after parsing the source file
-  -help  Display this list of options
-  --help  Display this list of options
