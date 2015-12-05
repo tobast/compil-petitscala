@@ -92,7 +92,7 @@ rule token = parse
 | "&&"				{ Tland }
 | "||"				{ Tlor }
 | '.'				{ Tdot }
-| "//" [^'\n']*'\n'	{ newline lexbuf ; token lexbuf }
+| "//" [^'\n']*		{ token lexbuf }
 | "/*"				{ comment lexbuf }
 | ('0' | ['1'-'9'] digit*) as nums				{ Tint (nums) }
 	(* Keep it as a string: the parser will be able to check if neg or pos *)
@@ -120,6 +120,7 @@ and cstring curChars = parse
 
 and comment = parse
 | "*/"				{ token lexbuf }
-| _					{ comment lexbuf }
+| [^'\n']			{ comment lexbuf }
+| '\n'				{ newline lexbuf ; comment lexbuf }
 | "/*"				{ lexicalError "Unexpected symbol '/*' in a commentary." }
 | eof				{ lexicalError "Missing terminating */ symbol." }
