@@ -13,13 +13,22 @@ let locateError pos file =
 	let c = pos.pos_cnum - pos.pos_bol + 1 in
 	sprintf "File \"%s\", line %d, characters %d-%d:\n" file l (c-1) c
 
+let keepBacktrace = ref false
+let printBacktrace bt =
+	if !keepBacktrace then
+		eprintf "Backtrace:\n%s@?" bt
+
 
 (*************************** MAIN ********************************************)
 let () =
 	let parseOnly = ref false in
 	let sourceFilePath = ref "" in
 	let argParams = [("--parse-only", Arg.Unit (fun () -> parseOnly := true),
-						"Stop after parsing the source file")] in
+						"Stop after parsing the source file") ;
+					 ("--backtrace", Arg.Unit
+					 	(fun () -> keepBacktrace := true ;
+							Printexc.record_backtrace true),
+					 	"Keeps and prints the backtrace in case of error.")] in
 	let argAnonFct = (fun str -> sourceFilePath := str) in
 	let argUsage = "Usage: pscala [options] sourceFile.scala" in
 
@@ -67,13 +76,19 @@ let () =
 		(try Typer.doPrgmTyping ast
 		with
 		| Typer.TyperError (pos, msg) ->
+			let bt = Printexc.get_backtrace () in
 			let loc = formatErrorLoc pos.loc_beg pos.loc_end !sourceFilePath in
 			eprintf "%sConsistency error: %s\n@?" loc msg;
+			printBacktrace bt ;
 			exit 1
 		| Typer.InternalError msg ->
+			let bt = Printexc.get_backtrace () in
 			eprintf "Typer internal error: %s\n@?" msg ;
+			printBacktrace bt ;
 			exit 2
 		| ex ->
-			eprintf "Unknown internal error during typing: %s\nBacktrace:\n%s@?"
-				(Printexc.to_string ex) (Printexc.get_backtrace ());
+			let bt = Printexc.get_backtrace () in
+			eprintf "Unknown internal error during typing: %s\n@?"
+				(Printexc.to_string ex) ;
+			printBacktrace bt ;
 			exit 2)
