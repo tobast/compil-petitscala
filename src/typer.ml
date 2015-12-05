@@ -74,13 +74,18 @@ let getInheritedType cl = match cl.textends with
  * the class `fst clTyp', with the real type obtained by substituting every
  * local type by its type passed as argument of `clTyp'
  ***)
-let substClassTypes env clTyp loc genericType =
+let rec substClassTypes env clTyp loc genericType =
 	match snd clTyp with
 	| EmptyAType -> genericType
 	| ArgType(clParams) ->
 		let classDef = findClass (fst clTyp) env loc in
 		let rec doSubst clTy par = match (clTy,par) with
-		| [],[] -> genericType
+		| [],[] ->
+			(* If it was not a class type, substitute deeper *)
+			let selfSubst = substClassTypes env clTyp loc in
+			(fst genericType, (match (snd genericType) with
+					| EmptyAType -> EmptyAType
+					| ArgType(t) -> ArgType(List.map selfSubst t)))
 		| [],_ | _,[] -> raise (TyperError (loc, "Class "^(fst clTyp)^" was "^
 			"passed more/less types than expected."))
 		| (fpar::_, rpar::_) when (fst genericType = (fst fpar).name) -> rpar
@@ -93,12 +98,17 @@ let substClassTypes env clTyp loc genericType =
  * the method `meth', with the real type obtained by substituting every
  * local type by its type passed as argument of `meth' in `argTy'
  ***)
-let substMethTypes env meth argTy loc genericType =
+let rec substMethTypes env meth argTy loc genericType =
 	match argTy with
 	| EmptyAType -> genericType
 	| ArgType(methPar) ->
 		let rec doSubst methPa par = match (methPa,par) with
-		| [],[] -> genericType
+		| [],[] ->
+			(* If it was not a class type, substitute deeper *)
+			let selfSubst = substMethTypes env meth argTy loc in
+			(fst genericType, (match (snd genericType) with
+					| EmptyAType -> EmptyAType
+					| ArgType(t) -> ArgType(List.map selfSubst t)))
 		| [],_|_,[] -> raise (TyperError (loc, "Method "^(meth.mname)^" was "^
 			"passed more/less types than expected."))
 		| (fpar::_,rpar::_) when (fst genericType = fpar.name) -> rpar
@@ -128,15 +138,31 @@ let addMeth cl mName mVal =
  * Given a position type (positive/negative), checks that the given type
  * is legal at the given code position. Throws an exception otherwise.
  ***)
-let checkVariance env ty posType loc =
+let rec checkVariance env ty posType loc =
 	let getTypeVariance ty =
 		let cl = findClass (fst ty) env loc in
 		cl.tcvariance
 	in
+	let invVariance = function
+	| TMplus -> TMminus
+	| TMminus -> TMplus
+	| TMneutral -> TMneutral
+	in
+	let rec recurseVariance real formal = match (real,formal) with
+	| [],[] -> ()
+	| [],_|_,[] -> raise (TyperError (loc, "Got more/less type parameters "^
+						"than expected for class "^(fst ty)^"."))
+	| rhd::rtl, fhd::ftl ->
+		(match (snd fhd) with
+		| TMneutral -> checkVariance env rhd TMneutral loc
+		| TMplus -> checkVariance env rhd posType loc
+		| TMminus -> checkVariance env rhd (invVariance posType) loc) ;
+		recurseVariance rtl ftl
+	in
 
 	let tyVariance = getTypeVariance ty in
 
-	if tyVariance <> TMneutral then
+	if tyVariance <> TMneutral then (
 		if tyVariance <> posType then (
 			let posTypStr = (match posType with
 				| TMplus -> "positive"
@@ -150,6 +176,14 @@ let checkVariance env ty posType loc =
 				" and is in a "^posTypStr^" position, yet it is "
 				^tyVarStr^"."))
 			)
+
+		);
+
+	(match snd ty with
+	| EmptyAType -> ()
+	| ArgType(t) -> 
+		let cl = findClass (fst ty) env loc in
+		recurseVariance t cl.tclassTypes)
 
 (***
 * Checks that the class cl1 is "an arrow of" the class cl2, ie. that cl2
@@ -218,8 +252,9 @@ let rec isSubtype env ty1 loc1 ty2 =
 		let rec chkVariance formal lt1 lt2 = match formal,lt1,lt2 with
 		| [],[],[] -> true
 		| [],_,_ | _,[],_ | _,_,[] ->
+			let pty1=dispType ty1 and pty2 = dispType ty2 in
 			raise (InternalError ("Encountered types with not enough/too much"^
-				" argument types."))
+				" argument types: "^pty1^" ; "^pty2^"."))
 		| fhd::ftl, pty1::l1tl, pty2::l2tl  ->
 			let cParam = (match snd fhd with
 			| TMplus -> isSubtype env pty1 loc1 pty2
@@ -244,13 +279,22 @@ let rec isSubtype env ty1 loc1 ty2 =
 			| Some t -> t) in
 		let extName = fst (extCl.extType) in
 		if isArrow env extName (fst ty2) then begin
+			(*
 			match (snd extCl.extType) with
-			| EmptyAType -> isSubtype env extCl.extType loc1 ty2
+			| EmptyAType -> dbgRec 3 ;isSubtype env extCl.extType loc1 ty2
 			| ArgType(at1) ->
+				(*HERE*)
 				let typlist = List.rev (List.fold_left
 					(fun cur ex -> (exprType env ex)::cur) [] extCl.param) in
 				let nty1 = (extName, ArgType typlist) in
-				isSubtype env nty1 loc1 ty2
+				dbgRec 4 ; isSubtype env nty1 loc1 ty2
+			*)
+			let nty1 = (extName, (match snd extCl.extType with
+				| EmptyAType -> EmptyAType
+				| ArgType(at) -> ArgType(
+					List.map (substClassTypes env ty1 loc1) at)))
+			in
+			isSubtype env nty1 loc1 ty2
 		end
 		else if (not (isArrow env (fst ty1) (fst ty2))) then (
 			(* If C1 -/-> C2 *)
@@ -288,7 +332,6 @@ and checkSubstWellFormed env formal real entity loc substFct =
 		| NoClassRel -> ()
 		);
 		checkSubstWellFormed env ftl rtl entity loc substFct
-		
 
 (***
  * Checks that the type `ty' is well formed in the environment `env'. If not,
@@ -444,7 +487,13 @@ and exprType env exp = match exp.ex with
 	let substTypes ty = 
 		substClassTypes env classType exp.eloc
 			(substMethTypes env meth argt exp.eloc ty) in
-	(*TODO check sigma o sigma' well formed *)
+
+	(* Well-formed check *)
+	(match argt with
+	| EmptyAType -> ()
+	| ArgType(t) -> 
+		checkSubstWellFormed env meth.parTypes t meth.mname exp.eloc
+			substTypes) ;
 
 	let rec checkArgs formal pars = match (formal,pars) with
 	| [],[] -> ()
@@ -453,7 +502,6 @@ and exprType env exp = match exp.ex with
 	| fHd::fTl, pHd::pTl ->
 		let parTyp = exprType env pHd in
 		let fmethTyp = substTypes (snd fHd) in
-
 		if not (isSubtype env parTyp exp.eloc fmethTyp) then
 			wrongTypeError pHd.eloc parTyp fmethTyp
 	in
@@ -765,9 +813,32 @@ let doClassTyping env cl =
 				if not methDecl.override then
 					raise (TyperError (methDecl.mLoc,("This method was "^
 						"previously declared.")));
+
 				(* As we are comparing from the inherited method (and not the
-				   method of the superclass itself), we do not have to bother
-				   with type substitution *)
+				   method of the superclass itself), we only have to substitute
+				   type parameters' names *)
+				let substParamTypeName tName =
+					let rec doSubst curPT superPT = match (curPT,superPT) with
+					| [],[] -> tName
+					| [],_|_,[] -> 
+						raise (TyperError (methDecl.mLoc, ("This overriding "^
+							"method doesn't have the same number of "^
+							"parameters than the method it is overriding.")))
+					| chd::ctl, shd::stl ->
+						if shd.name = tName then
+							chd.name
+						else
+							doSubst ctl stl
+					in
+					doSubst methDecl.parTypes supermeth.parTypes
+				in
+				let rec substParamType ty =
+					(substParamTypeName (fst ty), (match snd ty with
+						| EmptyAType -> EmptyAType
+						| ArgType(tt) -> ArgType (List.map substParamType tt)
+						))
+				in
+
 				let rec compareParTypes nPar supPar parId =
 					match nPar,supPar with
 				| [],[] -> ()
@@ -776,18 +847,20 @@ let doClassTyping env cl =
 						"method doesn't have the same number of parameters "^
 						"than the method it is overriding.")))
 				| (_,newHd)::newTl, (_,supHd)::supTl ->
-					if newHd <> supHd then
+					if newHd <> (substParamType supHd) then
 						raise (TyperError (methDecl.mLoc, ("Parameter "^
 							(string_of_int parId)^" has type "^
 							(dispType newHd)^", yet it is overriding a "^
-							"parameter of type "^(dispType supHd)^".")));
+							"parameter of type "^
+							(dispType (substParamType supHd))^".")));
 					compareParTypes newTl supTl (parId+1)
 				in
 				compareParTypes methDecl.mparams supermeth.mparams 1;
 
 				(* return type *)
-				if not (isSubtype (curEnv !nEnv)
-						methDecl.retType methDecl.mLoc supermeth.retType) then
+				if not (isSubtype (curEnv !locEnv)
+						methDecl.retType methDecl.mLoc
+						(substParamType supermeth.retType)) then
 					raise (TyperError (methDecl.mLoc, ("This overriding "^
 						"method's return type "^(dispType methDecl.retType)^
 						" is not a subtype of "^(dispType supermeth.retType)^
