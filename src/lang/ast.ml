@@ -95,7 +95,8 @@ and typedClass = {
 	textends : classExtends option ;
 	tcbody : decl list ;
 	tcvars : varType SMap.t ;
-	tcmeth : meth SMap.t
+	tcmeth : meth SMap.t ;
+	tcvariance : paramTypeModifier
 }
 
 and decl = Dvar of var | Dmeth of meth

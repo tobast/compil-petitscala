@@ -123,6 +123,34 @@ let addMeth cl mName mVal =
 	let nMeth = SMap.add mName mVal cl.tcmeth in
 	{ cl with tcmeth = nMeth }
 
+
+(***
+ * Given a position type (positive/negative), checks that the given type
+ * is legal at the given code position. Throws an exception otherwise.
+ ***)
+let checkVariance env ty posType loc =
+	let getTypeVariance ty =
+		let cl = findClass (fst ty) env loc in
+		cl.tcvariance
+	in
+
+	let tyVariance = getTypeVariance ty in
+
+	if tyVariance <> TMneutral then
+		if tyVariance <> posType then (
+			let posTypStr = (match posType with
+				| TMplus -> "positive"
+				| TMminus -> "negative"
+				| TMneutral -> "neutral") in
+			let tyVarStr = (match tyVariance with
+				| TMplus -> "covariant"
+				| TMminus -> "contravariant"
+				| TMneutral -> assert false (*unreachable*) ) in
+			raise (TyperError (loc, "This expression has type "^(dispType ty)^
+				" and is in a "^posTypStr^" position, yet it is "
+				^tyVarStr^"."))
+			)
+
 (***
 * Checks that the class cl1 is "an arrow of" the class cl2, ie. that cl2
 * extends (even indirectly) cl1
@@ -299,6 +327,32 @@ and varValue env varStmt =
 	| Vvar(id,NoType,defExp)   | Vval(id,NoType,defExp)   ->
 		let expTyp = exprType env defExp in
 		(mutbl, expTyp)
+
+(***
+ * Checks that a variable declaration is correct (variance, types, ...)
+ ***)
+and checkVarWellDef env varDef =
+	let _,optTyp,vExp = (match varDef.v with
+		Vvar(x,y,z) | Vval(x,y,z) -> x,y,z) in
+
+	let varTyp = exprType env vExp in
+	checkWellFormed env varTyp vExp.eloc;
+
+	(match optTyp with
+	| NoType -> ()
+	| Type(suppTyp) ->
+		if not (isSubtype env varTyp vExp.eloc suppTyp) then
+			wrongTypeError vExp.eloc varTyp suppTyp
+	) ;
+	
+	let posVariance =
+		(match varDef.v with Vvar(_) -> TMneutral | Vval(_) -> TMplus) in
+	checkVariance env varTyp posVariance vExp.eloc;
+	(match optTyp with
+	| NoType -> ()
+	| Type(suppTyp) ->
+		checkVariance env suppTyp posVariance varDef.vloc)
+
 	
 and isMutable env acc loc = match acc with
 | AccIdent(id) ->
@@ -329,26 +383,6 @@ and exprType env exp = match exp.ex with
 					  eloc=exp.eloc })
 | Eaccess(AccMember(aexp,id)) ->
 	let subTyp = exprType env aexp in
-	(*
-	let rec findMemberType clTyp =
-		let cl = findClass (fst clTyp) env in
-		(try 
-			(substClassTypes env clTyp (snd (SMap.find id (env.vars))))
-		with Not_found ->
-			let inherTyp = getInheritedType cl in
-			if (fst inherTyp.extType) = "AnyRef" then
-				raise (TyperError (exp.eloc,("Variable `"^id^"' was "^
-					"not declared in this scope.")))
-			else if inherTyp.param = [] then
-				findMemberType (fst inherTyp.extType, EmptyAType)
-			else
-				findMemberType (fst inherTyp.extType,
-					ArgType ((List.map (fun sExp -> substClassTypes env clTyp
-						(exprType env sExp)) (inherTyp.param))))
-		)
-	in
-	findMemberType subTyp *)
-
 	classExists env (fst subTyp) aexp.eloc;
 	let cl = findClass (fst subTyp) env (aexp.eloc) in
 	(try substClassTypes env subTyp aexp.eloc (snd (SMap.find id cl.tcvars))
@@ -524,6 +558,9 @@ and exprType env exp = match exp.ex with
 		| Bvar(vv) ->
 			let v = vv.v in
 			let vName = (match v with Vvar(x,_,_) | Vval(x,_,_) -> x) in
+
+			checkVarWellDef env vv ; 
+
 			let nEnv = addVar env vName (varValue env vv) in
 			blockType nEnv tl
 		| Bexpr(bex) ->
@@ -575,8 +612,10 @@ let doClassTyping env cl =
 		}
 	in
 	
-	let addParamType parTyps envRef alterEnv bestLoc (*FIXME imprecise loc*) =
-		List.iter (fun parTy ->
+	let addParamType parTyps envRef alterEnv bestLoc isClass =
+										(*FIXME imprecise loc*)
+		List.iter (fun parTyCl ->
+				let parTy = fst parTyCl in
 				if parTy.rel <> NoClassRel then (
 					let nTy = parTy.oth in
 					checkWellFormed (alterEnv !envRef) nTy bestLoc );
@@ -587,14 +626,21 @@ let doClassTyping env cl =
 							   textends = None ;
 							   tcbody = [] ;
 							   tcmeth = SMap.empty ;
-							   tcvars = SMap.empty }
+							   tcvars = SMap.empty ;
+							   tcvariance = snd parTyCl}
 				in
 				let nClass = 
 					(match parTy.rel with
 					| SubclassOf ->
+						checkVariance (alterEnv !envRef) parTy.oth
+							(if isClass then TMplus else TMminus)
+							bestLoc;
 						inheritFromClass (alterEnv !envRef) nClass parTy.oth
 							None bestLoc
 					| SuperclassOf ->
+						checkVariance (alterEnv !envRef) parTy.oth
+							(if isClass then TMminus else TMplus)
+							bestLoc;
 						envRef := addSuptypeDecl !envRef parTy.name parTy.oth ;
 						nClass
 					| _ -> nClass)
@@ -612,7 +658,7 @@ let doClassTyping env cl =
 	if hasDoubleElem (List.map (fun k -> (fst k).name) cl.classTypes) then
 		raise (TyperError (cl.cLoc, "The same name was used twice in the "^
 			"type parameters of this class."));
-	addParamType (List.map fst cl.classTypes) nEnv (fun k -> k ) cl.cLoc;
+	addParamType cl.classTypes nEnv (fun k -> k ) cl.cLoc true;
 
 	(* Inheritance *)
 	let nClass =
@@ -622,12 +668,14 @@ let doClassTyping env cl =
 		 textends = cl.extends ;
 		 tcbody = [] ;
 		 tcmeth = SMap.empty ;
-		 tcvars = SMap.empty
+		 tcvars = SMap.empty ;
+		 tcvariance = TMneutral
 		} in
 	let nClass = ref
 		(match cl.extends with
 		| None -> nClass
 		| Some t ->
+			checkVariance !nEnv t.extType TMplus cl.cLoc ;
 			if List.mem (fst t.extType) ["Any";"AnyVal";"Unit";"Int";
 					"Boolean";"String";"Null";"Nothing"] then
 				raise (TyperError (cl.cLoc, "This class cannot inherit from "^
@@ -684,6 +732,7 @@ let doClassTyping env cl =
 		| Dvar(varDecl) ->
 			let name = (match varDecl.v with Vvar(x,_,_) | Vval(x,_,_) -> x) in
 			let vt = varValue (curEnv !nEnv) varDecl in
+			checkVarWellDef (curEnv !nEnv) varDecl ;
 			if SMap.mem name !nClass.tcvars then
 				raise (TyperError (varDecl.vloc, "A field named "^
 					name^" was already declared in this class."));
@@ -695,7 +744,8 @@ let doClassTyping env cl =
 			if hasDoubleElem (List.map (fun k -> k.name) methDecl.parTypes) then
 				raise (TyperError (methDecl.mLoc, "The same name was used "^
 					"twice in the type parameters of this method."));
-			addParamType methDecl.parTypes locEnv curEnv methDecl.mLoc ;
+			addParamType (List.map (fun k -> (k,TMneutral)) methDecl.parTypes)
+				locEnv curEnv methDecl.mLoc false;
 
 			(* Parameters *)
 			if hasDoubleElem (List.map fst methDecl.mparams) then
@@ -704,6 +754,7 @@ let doClassTyping env cl =
 			List.iter (fun (idt,ty) ->
 					(*FIXME imprecise loc*)
 					checkWellFormed (curEnv !locEnv) ty methDecl.mLoc;
+					checkVariance (curEnv !locEnv) ty TMminus methDecl.mLoc;
 					locEnv := addVar !locEnv idt (false,ty))
 				methDecl.mparams;
 			locEnv := addVar !locEnv "_return" (false,methDecl.retType) ;
@@ -751,6 +802,8 @@ let doClassTyping env cl =
 						"to override in the superclass.")))
 			);
 			(* Effectively adding the method, check type *)
+			checkVariance (curEnv !locEnv) methDecl.retType TMplus
+				methDecl.mLoc;
 			nClass := addMeth !nClass methDecl.mname methDecl ;
 			let bodyTyp = exprType (curEnv !locEnv) methDecl.mbody in
 			if not (isSubtype (curEnv !locEnv) bodyTyp
@@ -769,7 +822,8 @@ let doPrgmTyping (prgm : Ast.prgm) =
 				 	if inher <> "" then Some
 						{ extType=(inher,EmptyAType) ; param=[] }
 					else None ;
-				 tcbody=[] ; tcvars=SMap.empty ; tcmeth=SMap.empty } )
+				 tcbody=[] ; tcvars=SMap.empty ; tcmeth=SMap.empty ;
+				 tcvariance = TMneutral} )
 	in
 	let baseClasses = smap_of_list (List.map mkBaseClass [
 			"Nothing",	"";
