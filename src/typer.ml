@@ -283,7 +283,6 @@ let rec isSubtype env ty1 loc1 ty2 =
 			match (snd extCl.extType) with
 			| EmptyAType -> dbgRec 3 ;isSubtype env extCl.extType loc1 ty2
 			| ArgType(at1) ->
-				(*HERE*)
 				let typlist = List.rev (List.fold_left
 					(fun cur ex -> (exprType env ex)::cur) [] extCl.param) in
 				let nty1 = (extName, ArgType typlist) in
@@ -745,6 +744,8 @@ let doClassTyping env cl =
 			"in the parameters of this class."));
 	List.iter (fun (idt,ty) ->
 			checkWellFormed (curEnv !nEnv) ty cl.cLoc (*FIXME imprecise loc*);
+			(* Implicit val declaration: we have to check variance *)
+			checkVariance (curEnv !nEnv) ty TMplus cl.cLoc ;
 			nClass := classAddVar !nClass idt (false,ty))
 		cl.cparams;
 	(* `This' adding *)
