@@ -27,7 +27,7 @@ and typExprVal =
 | TEunit
 | TEthis
 | TEnull
-| TEtypAccess of typAccess
+| TEaccess of typAccess
 | TEassign of typAccess * typExpr
 | TEcall of typAccess * argType * typExpr list
 | TEinstantiate of ident * argType * typExpr list
@@ -41,6 +41,8 @@ and typExprVal =
 
 and typBlockVal = TBexpr of typExpr | TBvar of typVar
 and typBlock = typBlockVal list
+
+and varType = bool (* Mutable? *) * typ
 
 and typVar = {
 	vname : ident ;
@@ -66,17 +68,17 @@ and typedClass = {
 	tclassTypes : paramTypeClass list ;
 	tcparams : parameter list ;
 	textends : typClassExtends option ;
-	tcbody : decl list ;
+	tcbody : typDecl list ;
 	tcvars : varType SMap.t ;
-	tcmeth : meth SMap.t ;
+	tcmeth : typMeth SMap.t ;
 	tcvariance : paramTypeModifier
 }
 and typDecl = TDvar of typVar | TDmeth of typMeth
 
 and typPrgm = {
 	tclasses : typedClass list ;
-	main : typedClass ;
-	environment : typingEnvironment
+	tmain : typedClass ;
+	tenvironment : typingEnvironment
 }
 
 and typingEnvironment = {

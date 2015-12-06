@@ -65,8 +65,6 @@ and typ = ident * argType
 and optType = Type of typ | NoType
 and argType = EmptyAType | ArgType of typ list
 
-and varType = bool (* Mutable? *) * typ
-
 and meth = {
 	mname : ident ;
 	parTypes : paramType list ;
