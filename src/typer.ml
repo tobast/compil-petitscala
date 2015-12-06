@@ -13,8 +13,8 @@
  *****************************************************************************)
 
 open Ast
+open TypedAst
 open Lexing
-open Typedefs
 
 exception InternalError of string
 exception TyperError of codeLoc * string
@@ -64,11 +64,6 @@ let wrongTypeError loc actTyp expTyp =
 	raise (TyperError (loc,("This expression has type "^(dispType actTyp)^
 		", but type "^(dispType expTyp)^" was expected.")))
 
-
-let getInheritedType cl = match cl.textends with
-| None -> { extType = "AnyRef",EmptyAType ; param = [] }
-| Some t -> t
-
 (***
  * Replaces the type `genericType', which may contain parameter types from
  * the class `fst clTyp', with the real type obtained by substituting every
@@ -109,12 +104,12 @@ let rec substMethTypes env meth argTy loc genericType =
 			(fst genericType, (match (snd genericType) with
 					| EmptyAType -> EmptyAType
 					| ArgType(t) -> ArgType(List.map selfSubst t)))
-		| [],_|_,[] -> raise (TyperError (loc, "Method "^(meth.mname)^" was "^
+		| [],_|_,[] -> raise (TyperError (loc, "Method "^(meth.tmname)^" was "^
 			"passed more/less types than expected."))
 		| (fpar::_,rpar::_) when (fst genericType = fpar.name) -> rpar
 		| _::ftl,_::rtl -> doSubst ftl rtl
 		in
-		doSubst meth.parTypes methPar
+		doSubst meth.tparTypes methPar
 
 let addSuptypeDecl env tname ty =
 	let cList = (try SMap.find tname env.suptypeDecl with Not_found -> []) in
@@ -210,7 +205,7 @@ let rec isArrow env cl1 cl2 =
 						"class "^cl^"."))) in
 			(match clDef.textends with
 			| None -> "AnyRef"
-			| Some cl -> fst cl.extType)
+			| Some cl -> fst cl.textType)
 
 		else
 			let elem =  (try List.find (fun k -> fst k = cl) baseArrows
@@ -275,9 +270,9 @@ let rec isSubtype env ty1 loc1 ty2 =
 		)
 	else (* If C1 extends C[..], C -> C2 *) (
 		let extCl = (match (findClass (fst ty1) env loc1).textends with
-			| None -> { extType = ("AnyRef",EmptyAType) ; param = [] }
+			| None -> { textType = ("AnyRef",EmptyAType) ; tparam = [] }
 			| Some t -> t) in
-		let extName = fst (extCl.extType) in
+		let extName = fst (extCl.textType) in
 		if isArrow env extName (fst ty2) then begin
 			(*
 			match (snd extCl.extType) with
@@ -288,7 +283,7 @@ let rec isSubtype env ty1 loc1 ty2 =
 				let nty1 = (extName, ArgType typlist) in
 				dbgRec 4 ; isSubtype env nty1 loc1 ty2
 			*)
-			let nty1 = (extName, (match snd extCl.extType with
+			let nty1 = (extName, (match snd extCl.textType with
 				| EmptyAType -> EmptyAType
 				| ArgType(at) -> ArgType(
 					List.map (substClassTypes env ty1 loc1) at)))
@@ -358,17 +353,18 @@ and varValue env varStmt =
 		| Vval(_) -> false) in
 	match varStmt.v with
 	| Vvar(id,Type(ty),defExp) | Vval(id,Type(ty),defExp) ->
-		let expTyp = exprType env defExp in
+		let expTypEx = (exprType env defExp) in
+		let expTyp = expTypEx.etyp in
 		checkWellFormed env ty varStmt.vloc;
 		if isSubtype env expTyp (defExp.eloc) ty then
-			(mutbl, ty)
+			(mutbl, ty), expTypEx
 		else
 			raise (TyperError (defExp.eloc, ("This expression was declared a "^
 				"subtype of "^(dispType ty)^", but is of type "^
 				(dispType expTyp)^".")))
 	| Vvar(id,NoType,defExp)   | Vval(id,NoType,defExp)   ->
-		let expTyp = exprType env defExp in
-		(mutbl, expTyp)
+		let expTypEx = (exprType env defExp) in
+		(mutbl, expTypEx.etyp), expTypEx
 
 (***
  * Checks that a variable declaration is correct (variance, types, ...)
@@ -377,7 +373,7 @@ and checkVarWellDef env varDef =
 	let _,optTyp,vExp = (match varDef.v with
 		Vvar(x,y,z) | Vval(x,y,z) -> x,y,z) in
 
-	let varTyp = exprType env vExp in
+	let varTyp = (exprType env vExp).etyp in
 	checkWellFormed env varTyp vExp.eloc;
 
 	(match optTyp with
@@ -401,44 +397,56 @@ and isMutable env acc loc = match acc with
 	(try fst (SMap.find id env.vars)
 	with Not_found -> isMutable env (AccMember({ex=Ethis;eloc=loc},id)) loc)
 | AccMember(exp,id) ->
-	let expTyp = exprType env exp in
+	let expTyp = (exprType env exp).etyp in
 	let cl = findClass (fst expTyp) env (exp.eloc) in
 	(try fst (SMap.find id (cl.tcvars))
 	with Not_found -> raise (TyperError (exp.eloc, ("Variable `"^id^"' was "^
 		"not declared in this scope."))))
 
-and exprType env exp = match exp.ex with
-| Eint _ -> "Int",EmptyAType
-| Estr _ -> "String",EmptyAType
-| Ebool _ -> "Boolean",EmptyAType
-| Eunit -> "Unit",EmptyAType
-| Enull  -> "Null",EmptyAType
+and exprType env exp : typExpr = match exp.ex with
+| Eint v -> { tex=TEint(v) ; etyp="Int",EmptyAType}
+| Estr v -> { tex=TEstr(v) ; etyp="String",EmptyAType}
+| Ebool v ->{ tex=TEbool(v); etyp="Boolean",EmptyAType}
+| Eunit ->  { tex=TEunit ;   etyp="Unit",EmptyAType}
+| Enull ->  { tex=TEnull ;   etyp="Null",EmptyAType}
 | Ethis ->
-	(try snd (SMap.find "this" env.vars)
+	(try
+		{ tex=TEthis ; etyp=snd (SMap.find "this" env.vars) }
 	with Not_found -> raise (InternalError ("Value `this' was not "^
 		"declared in this scope.")))
 | Eaccess(AccIdent(id)) ->
-	(try snd (SMap.find id env.vars)
-	with Not_found ->
-		exprType env {ex=Eaccess(AccMember(
-						{ex=Ethis;eloc=exp.eloc},id)) ;
-					  eloc=exp.eloc })
+	{ tex = TEaccess(TAccIdent(id)) ;
+	  etyp=
+		(try
+			snd (SMap.find id env.vars)
+		with Not_found ->
+			(exprType env {ex=Eaccess(AccMember(
+							{ex=Ethis;eloc=exp.eloc},id)) ;
+						  eloc=exp.eloc }).etyp)
+	}
 | Eaccess(AccMember(aexp,id)) ->
-	let subTyp = exprType env aexp in
+	let subTypExp = exprType env aexp in
+	let subTyp = subTypExp.etyp in
 	classExists env (fst subTyp) aexp.eloc;
 	let cl = findClass (fst subTyp) env (aexp.eloc) in
-	(try substClassTypes env subTyp aexp.eloc (snd (SMap.find id cl.tcvars))
-	with Not_found ->
-		raise (TyperError (exp.eloc,("Variable `"^(fst subTyp)^"."^id^"' was "^
-			"not declared in this scope."))))
+	let ty =
+		(try substClassTypes env subTyp aexp.eloc (snd (SMap.find id cl.tcvars))
+		with Not_found ->
+			raise (TyperError (exp.eloc,("Variable `"^(fst subTyp)^"."^id^
+				"' was not declared in this scope."))))
+	in
+	{ tex = TEaccess(TAccMember(subTypExp,id)) ; etyp = ty }
 | Eassign(acc, assignExp) ->
 	if not (isMutable env acc (exp.eloc)) then
 		raise (TyperError (exp.eloc, ("Illegaly assigning the read-only "^
 			"value "^(match acc with AccIdent(x)|AccMember(_,x) -> x)^".")));
-	let vTy = exprType env {ex=Eaccess(acc) ; eloc=exp.eloc} in
-	let eTy = exprType env assignExp in
+	let vTyEx = exprType env {ex=Eaccess(acc) ; eloc=exp.eloc} in
+	let vTyAcc = (match vTyEx.tex with TEaccess(t) -> t | _ -> assert false) in
+	let vTy = vTyEx.etyp in
+	let eTyEx = exprType env assignExp in
+	let eTy = eTyEx.etyp in
 	if isSubtype env eTy (assignExp.eloc) vTy then
-		("Unit", EmptyAType)
+		{ tex = TEassign(vTyAcc,eTyEx) ; etyp = ("Unit", EmptyAType) }
 	else
 		raise (TyperError (assignExp.eloc, ("This expression has type "^
 			(dispType eTy)^", but was expected to be a subtype of "^
@@ -447,29 +455,35 @@ and exprType env exp = match exp.ex with
 | Einstantiate(id,argt,params) ->
 	checkWellFormed env (id,argt) exp.eloc ;
 	let cl = findClass id env exp.eloc in
-	let rec checkPar formal par = match (formal,par) with
-	| [],[] -> ()
+	let rec checkPar formal par out = match (formal,par) with
+	| [],[] -> List.rev out
 	| _,[]|[],_ -> raise (TyperError (exp.eloc, ("Got more/less parameters "^
 		"than expected while constructing "^id^".")))
 	| fHd::fTl, pHd::pTl ->
-		let tpHd = exprType env pHd in
+		let tpHdEx = exprType env pHd in
+		let tpHd = tpHdEx.etyp in
 		if isSubtype env tpHd (pHd).eloc fHd then
-			checkPar fTl pTl
+			checkPar fTl pTl (tpHdEx::out)
 		else
 			wrongTypeError (pHd.eloc) fHd tpHd
 	in
-	checkPar (List.map (substClassTypes env (id,argt) exp.eloc)
-		(List.map snd cl.tcparams)) params ;
-	(id,argt)
+	let outPars = 
+		checkPar (List.map (substClassTypes env (id,argt) exp.eloc)
+			(List.map snd cl.tcparams)) params [] in
+	{ tex = TEinstantiate(id,argt,outPars) ; etyp=id,argt}
 
 | Ecall(acc, argt, params) ->
 	(match argt with
 	| EmptyAType -> () 
 	| ArgType(at) -> List.iter (fun k -> checkWellFormed env k exp.eloc) at);
 	
-	let classType, methName, accLoc = (match acc with
-		| AccIdent(id) -> (exprType env {ex=Ethis;eloc=exp.eloc}, id, exp.eloc)
-		| AccMember(clExp,id) -> (exprType env clExp, id, clExp.eloc)
+	let classType, tyAcc, methName, accLoc = (match acc with
+		| AccIdent(id) ->
+			((exprType env {ex=Ethis;eloc=exp.eloc}).etyp, TAccIdent(id),
+			id, exp.eloc)
+		| AccMember(clExp,id) ->
+			let clExpTyp = exprType env clExp in
+			(clExpTyp.etyp, TAccMember(clExpTyp,id), id, clExp.eloc)
 		) in
 
 	if not (SMap.mem (fst classType) (env.classes)) then
@@ -491,100 +505,110 @@ and exprType env exp = match exp.ex with
 	(match argt with
 	| EmptyAType -> ()
 	| ArgType(t) -> 
-		checkSubstWellFormed env meth.parTypes t meth.mname exp.eloc
+		checkSubstWellFormed env meth.tparTypes t meth.tmname exp.eloc
 			substTypes) ;
 
-	let rec checkArgs formal pars = match (formal,pars) with
-	| [],[] -> ()
+	let rec checkArgs formal pars out = match (formal,pars) with
+	| [],[] -> List.rev out
 	| _,[]|[],_ -> raise (TyperError (exp.eloc, ("Got more/less parameters "^
 		"than expected while calling method.")))
 	| fHd::fTl, pHd::pTl ->
-		let parTyp = exprType env pHd in
+		let parTypEx = exprType env pHd in
+		let parTyp = parTypEx.etyp in
 		let fmethTyp = substTypes (snd fHd) in
 		if not (isSubtype env parTyp exp.eloc fmethTyp) then
 			wrongTypeError pHd.eloc parTyp fmethTyp
+		else
+			checkArgs fTl pTl (parTypEx::out)
 	in
-	checkArgs meth.mparams params ;
-	
-	substTypes meth.retType
-(*substMethTypes env meth argt (substClassTypes env classType meth.retType)*)
-			
+	let outArgs = checkArgs meth.tmparams params [] in
+		
+	{ tex = TEcall(tyAcc,argt,outArgs) ; etyp = (substTypes meth.tretTyp) }
+
 | Eunaryop(UnaryNot, ex) ->
 	let exTyp = exprType env ex in
-	if fst exTyp = "Boolean" then
-		exTyp
+	if fst exTyp.etyp = "Boolean" then
+		{ tex = TEunaryop(UnaryNot, exTyp) ; etyp = exTyp.etyp }
 	else
-		wrongTypeError exp.eloc exTyp ("Boolean",EmptyAType)
+		wrongTypeError exp.eloc exTyp.etyp ("Boolean",EmptyAType)
 | Eunaryop(UnaryMinus, ex) ->
 	let exTyp = exprType env ex in
-	if fst exTyp = "Int" then
-		exTyp
+	if fst exTyp.etyp = "Int" then
+		{ tex = TEunaryop(UnaryMinus, exTyp) ; etyp = exTyp.etyp }
 	else
-		wrongTypeError exp.eloc exTyp ("Int",EmptyAType)
+		wrongTypeError exp.eloc exTyp.etyp ("Int",EmptyAType)
 | Ebinop(op,ex1,ex2) ->
-	let tex1 = exprType env ex1 and tex2 = exprType env ex2 in
-	(match op with
-	| KwEqual | KwNEqual ->
-		if not (isSubtype env tex1 ex1.eloc ("AnyRef",EmptyAType)) then
-			wrongTypeError ex1.eloc tex1 ("AnyRef",EmptyAType)
-		else if not (isSubtype env tex2 ex2.eloc ("AnyRef",EmptyAType)) then
-			wrongTypeError ex2.eloc tex2 ("AnyRef",EmptyAType)
-		else
-			("Boolean", EmptyAType)
-	| Equal | NEqual | Greater | Geq | Less | Leq ->
-		if not (fst tex1 = "Int") then
-			wrongTypeError ex1.eloc tex1 ("Int", EmptyAType)
-		else if not (fst tex2 = "Int") then
-			wrongTypeError ex2.eloc tex2 ("Int", EmptyAType)
-		else
-			("Boolean", EmptyAType)
-	| Plus | Minus | Times | Div | Mod ->
-		if not (fst tex1 = "Int") then
-			wrongTypeError ex1.eloc tex1 ("Int", EmptyAType)
-		else if not (fst tex2 = "Int") then
-			wrongTypeError ex2.eloc tex2 ("Int", EmptyAType)
-		else
-			("Int", EmptyAType)
-	| Land | Lor ->
-		if not (fst tex1 = "Boolean") then
-			wrongTypeError ex1.eloc tex1 ("Boolean", EmptyAType)
-		else if not (fst tex2 = "Boolean") then
-			wrongTypeError ex2.eloc tex2 ("Boolean", EmptyAType)
-		else
-			("Boolean", EmptyAType)
-	)
+	let tex1ex = exprType env ex1 and tex2ex = exprType env ex2 in
+	let tex1 = tex1ex.etyp and tex2 = tex2ex.etyp in
+	let typVal =
+		(match op with
+		| KwEqual | KwNEqual ->
+			if not (isSubtype env tex1 ex1.eloc ("AnyRef",EmptyAType)) then
+				wrongTypeError ex1.eloc tex1 ("AnyRef",EmptyAType)
+			else if not (isSubtype env tex2 ex2.eloc ("AnyRef",EmptyAType)) then
+				wrongTypeError ex2.eloc tex2 ("AnyRef",EmptyAType)
+			else
+				("Boolean", EmptyAType)
+		| Equal | NEqual | Greater | Geq | Less | Leq ->
+			if not (fst tex1 = "Int") then
+				wrongTypeError ex1.eloc tex1 ("Int", EmptyAType)
+			else if not (fst tex2 = "Int") then
+				wrongTypeError ex2.eloc tex2 ("Int", EmptyAType)
+			else
+				("Boolean", EmptyAType)
+		| Plus | Minus | Times | Div | Mod ->
+			if not (fst tex1 = "Int") then
+				wrongTypeError ex1.eloc tex1 ("Int", EmptyAType)
+			else if not (fst tex2 = "Int") then
+				wrongTypeError ex2.eloc tex2 ("Int", EmptyAType)
+			else
+				("Int", EmptyAType)
+		| Land | Lor ->
+			if not (fst tex1 = "Boolean") then
+				wrongTypeError ex1.eloc tex1 ("Boolean", EmptyAType)
+			else if not (fst tex2 = "Boolean") then
+				wrongTypeError ex2.eloc tex2 ("Boolean", EmptyAType)
+			else
+				("Boolean", EmptyAType)
+		)
+	in
+	{ tex = TEbinop(op,tex1ex,tex2ex) ; etyp = typVal }
 | Eprint(ex) ->
-	let tex = exprType env ex in
+	let texex = exprType env ex in
+	let tex = texex.etyp in
 	if (fst tex <> "String") && (fst tex <> "Int") then
 		wrongTypeError ex.eloc tex ("String or Int",EmptyAType) (* Bweark. *)
 	else
-		("Unit", EmptyAType)
+		{ tex = TEprint(texex) ; etyp = ("Unit", EmptyAType) }
 | Eif(cnd,exIf,exElse) ->
-	let tCnd = exprType env cnd and tIf = exprType env exIf
-	and tElse = exprType env exElse in
+	let tCndEx = exprType env cnd and tIfEx = exprType env exIf
+	and tElseEx = exprType env exElse in
+	let tCnd = tCndEx.etyp and tIf = tIfEx.etyp and tElse = tElseEx.etyp in
 	if fst tCnd <> "Boolean" then
 		wrongTypeError cnd.eloc tCnd ("Boolean", EmptyAType)
 	else if isSubtype env tIf exIf.eloc tElse then
-		tElse
+		{tex = TEif(tCndEx,tIfEx,tElseEx) ; etyp = tElse }
 	else if isSubtype env tElse exElse.eloc tIf then
-		tIf
+		{tex = TEif(tCndEx,tIfEx,tElseEx) ; etyp = tIf }
 	else
 		raise (TyperError (exp.eloc,("If statement has type "^(dispType tIf)^
 			", but else statement has type "^(dispType tElse)^". Cannot unify"^
 			" this as one of those types.")))
 | Ewhile(cnd,code) ->
-	let tCnd = exprType env cnd and (*tCode*)_ = exprType env code in
+	let tCndEx = exprType env cnd and tCodeEx = exprType env code in
+	let tCnd = tCndEx.etyp in
 	if fst tCnd <> "Boolean" then
 		wrongTypeError cnd.eloc tCnd ("Boolean", EmptyAType)
 	else
-		("Unit",EmptyAType)
+		{ tex = TEwhile(tCndEx,tCodeEx) ; etyp = ("Unit",EmptyAType) }
 | Ereturn(ex) ->
-	let tEx = exprType env ex in
+	let tExEx = exprType env ex in
+	let tEx = tExEx.etyp in
 	let retTyp = (try snd (SMap.find "_return" env.vars)
 		with Not_found -> raise (TyperError (exp.eloc, "Return statement "^
 			"outside of a method's body."))) in
 	if isSubtype env tEx ex.eloc retTyp then
-		("Nothing", EmptyAType)
+		{ tex = TEreturn(tExEx) ; etyp = ("Nothing", EmptyAType) }
 	else
 		wrongTypeError ex.eloc retTyp tEx
 | Eblock(bl) ->
@@ -597,10 +621,11 @@ and exprType env exp = match exp.ex with
 		raise (TyperError (exp.eloc, "A field with the same name was declared"^
 			" twice in block."));
 
-	let rec blockType env = function
-	| [] -> ("Unit", EmptyAType)
+	let rec blockType env l outBl = match l with
+	| [] -> { tex = TEblock(List.rev outBl) ; etyp = ("Unit", EmptyAType) }
 	| Bexpr(ex)::[] ->
-		exprType env ex
+		let exty = exprType env ex in
+		{ tex = TEblock(List.rev (TBexpr(exty)::outBl)) ; etyp = exty.etyp }
 	| hd::tl -> (match hd with
 		| Bvar(vv) ->
 			let v = vv.v in
@@ -608,23 +633,25 @@ and exprType env exp = match exp.ex with
 
 			checkVarWellDef env vv ; 
 
-			let nEnv = addVar env vName (varValue env vv) in
-			blockType nEnv tl
+			let varVal,typEx = varValue env vv in
+			let nEnv = addVar env vName varVal in
+			let nVar = { vname = vName ; vtyp = varVal ; vexpr = typEx } in
+			blockType nEnv tl (TBvar(nVar) :: outBl)
 		| Bexpr(bex) ->
-			let _ = exprType env bex in
-			blockType env tl
+			let typEx = exprType env bex in
+			blockType env tl (TBexpr(typEx) :: outBl)
 		)
 	in
-	blockType env bl
+	blockType env bl []
 
 (***
  * Types a full class in the given environment, and returns the same
  * environment, to which the freshly typed class was added.
  ***)
-let doClassTyping env cl =
+let doClassTyping env (cl : Ast.classDef) : typedClass * typingEnvironment =
 	let nEnv = ref env in
 
-	let inheritFromClass env (cl : typedClass) supertype superParam clLoc =
+	let inheritFromClass env (cl : typedClass) supertype clLoc =
 		let super = (try SMap.find (fst supertype) env.classes
 			with Not_found ->
 				raise (TyperError (clLoc, "The class `"^(fst supertype)^
@@ -643,19 +670,19 @@ let doClassTyping env cl =
 		in
 		SMap.iter (fun key meth ->
 				outCl := addMeth !outCl key { meth with
-					parTypes = substParTypes meth.parTypes ;
-					mparams = List.map (fun p -> (fst p,
-							substTyp (snd p))) meth.mparams ;
-					retType = substTyp meth.retType })
+					tparTypes = substParTypes meth.tparTypes ;
+					tmparams = List.map (fun p -> (fst p,
+							substTyp (snd p))) meth.tmparams ;
+					tretTyp = substTyp meth.tretTyp })
 			super.tcmeth ;
 		(*NOTE WARNING we do not substitute types in the body of the method,
 			which becomes thus invalid. We are *NOT* supposed to use it
 			anymore! *)
 
 		{ !outCl with textends=Some {
-			extType = supertype ;
-				(* Maybe we'll do some more checks if needed on superParam*)
-			param = (match superParam with None -> [] | Some t -> t) }
+			textType = supertype ;
+			(* Up to the user to set tparam. Causes bugs if done here. *)
+			tparam = [] }
 		}
 	in
 	
@@ -683,7 +710,7 @@ let doClassTyping env cl =
 							(if isClass then TMplus else TMminus)
 							bestLoc;
 						inheritFromClass (alterEnv !envRef) nClass parTy.oth
-							None bestLoc
+							bestLoc
 					| SuperclassOf ->
 						checkVariance (alterEnv !envRef) parTy.oth
 							(if isClass then TMminus else TMplus)
@@ -712,7 +739,7 @@ let doClassTyping env cl =
 		{tcname = cl.cname ;
 		 tclassTypes = cl.classTypes ;
 		 tcparams = cl.cparams ;
-		 textends = cl.extends ;
+		 textends = None ; (* Done later *)
 		 tcbody = [] ;
 		 tcmeth = SMap.empty ;
 		 tcvars = SMap.empty ;
@@ -732,7 +759,7 @@ let doClassTyping env cl =
 					(fst t.extType)^", as it is not defined."));
 
 			checkWellFormed !nEnv t.extType cl.cLoc; (*FIXME imprecise loc*)
-			inheritFromClass !nEnv nClass t.extType (Some t.param) cl.cLoc
+			inheritFromClass !nEnv nClass t.extType cl.cLoc
 		) in
 	let curEnv cenv =
 		addClass cenv (cl.cname) !nClass
@@ -753,16 +780,23 @@ let doClassTyping env cl =
 		| [] -> EmptyAType
 		| l -> ArgType (List.map (fun ptc -> ((fst ptc).name, EmptyAType)) l))
 	in
-	nEnv := addVar !nEnv "this" (false, (cl.cname, thisArgt));
+	nEnv := addVar (curEnv !nEnv) "this" (false, (cl.cname, thisArgt));
 
 	(* Check that we can construct the inherited class *)
+	let makeTypeExtends = function
+	| None -> None
+	| Some ext ->
+		Some { textType = ext.extType ;
+			tparam = List.map (exprType !nEnv) ext.param }
+	in
+	nClass := { !nClass with textends = makeTypeExtends cl.extends };
 	(match cl.extends with
 		| None -> ()
 		| Some t ->
 			let inheritedTyp = (exprType (curEnv !nEnv)
 				{ ex = Einstantiate( (fst t.extType),(snd t.extType), t.param);
 				  eloc = cl.cLoc (*FIXME imprecise loc*)
-				})
+				}).etyp
 			in
 			if inheritedTyp <> t.extType then
 				raise (TyperError (cl.cLoc, ("Illegal call to the superclass "^
@@ -780,21 +814,39 @@ let doClassTyping env cl =
 	List.iter (fun declare -> match declare with
 		| Dvar(varDecl) ->
 			let name = (match varDecl.v with Vvar(x,_,_) | Vval(x,_,_) -> x) in
-			let vt = varValue (curEnv !nEnv) varDecl in
+			let vt,vexp = varValue (curEnv !nEnv) varDecl in
 			checkVarWellDef (curEnv !nEnv) varDecl ;
 			if SMap.mem name !nClass.tcvars then
 				raise (TyperError (varDecl.vloc, "A field named "^
 					name^" was already declared in this class."));
-			nClass := { !nClass with tcvars=(SMap.add name vt !nClass.tcvars)}
+			nClass := { !nClass with tcvars=(SMap.add name vt !nClass.tcvars) ;
+							tcbody=TDvar({
+										vname=name;
+										vtyp=vt;
+										vexpr=vexp}
+										)::(!nClass.tcbody)}
 		| Dmeth(methDecl) ->
 			let locEnv = ref !nEnv in
 
 			(* Type parameters *)
-			if hasDoubleElem (List.map (fun k -> k.name) methDecl.parTypes) then
+			if hasDoubleElem (List.map (fun k->k.name) methDecl.parTypes) then
 				raise (TyperError (methDecl.mLoc, "The same name was used "^
 					"twice in the type parameters of this method."));
 			addParamType (List.map (fun k -> (k,TMneutral)) methDecl.parTypes)
 				locEnv curEnv methDecl.mLoc false;
+
+			let curEnvLoc e =
+				(*Cur class with the currently typed method with a dummy body*)
+				addClass e cl.cname
+					(addMeth !nClass methDecl.mname {
+						tmname = methDecl.mname ;
+						tparTypes = methDecl.parTypes ;
+						tmparams = methDecl.mparams ;
+						tretTyp = methDecl.retType ;
+						tmbody = {tex = TEblock([]) ;etyp = methDecl.retType};
+						toverride = methDecl.override
+						})
+			in
 
 			(* Parameters *)
 			if hasDoubleElem (List.map fst methDecl.mparams) then
@@ -802,8 +854,8 @@ let doClassTyping env cl =
 					"twice in the parameters of this method."));
 			List.iter (fun (idt,ty) ->
 					(*FIXME imprecise loc*)
-					checkWellFormed (curEnv !locEnv) ty methDecl.mLoc;
-					checkVariance (curEnv !locEnv) ty TMminus methDecl.mLoc;
+					checkWellFormed (curEnvLoc !locEnv) ty methDecl.mLoc;
+					checkVariance (curEnvLoc !locEnv) ty TMminus methDecl.mLoc;
 					locEnv := addVar !locEnv idt (false,ty))
 				methDecl.mparams;
 			locEnv := addVar !locEnv "_return" (false,methDecl.retType) ;
@@ -831,7 +883,7 @@ let doClassTyping env cl =
 						else
 							doSubst ctl stl
 					in
-					doSubst methDecl.parTypes supermeth.parTypes
+					doSubst methDecl.parTypes supermeth.tparTypes
 				in
 				let rec substParamType ty =
 					(substParamTypeName (fst ty), (match snd ty with
@@ -856,15 +908,15 @@ let doClassTyping env cl =
 							(dispType (substParamType supHd))^".")));
 					compareParTypes newTl supTl (parId+1)
 				in
-				compareParTypes methDecl.mparams supermeth.mparams 1;
+				compareParTypes methDecl.mparams supermeth.tmparams 1;
 
 				(* return type *)
-				if not (isSubtype (curEnv !locEnv)
+				if not (isSubtype (curEnvLoc !locEnv)
 						methDecl.retType methDecl.mLoc
-						(substParamType supermeth.retType)) then
+						(substParamType supermeth.tretTyp)) then
 					raise (TyperError (methDecl.mLoc, ("This overriding "^
 						"method's return type "^(dispType methDecl.retType)^
-						" is not a subtype of "^(dispType supermeth.retType)^
+						" is not a subtype of "^(dispType supermeth.tretTyp)^
 						", the return type of the method it is overriding.")))
 			
 				(* All clear here! *)
@@ -875,17 +927,30 @@ let doClassTyping env cl =
 						"declared as overriding, yet there is no such method "^
 						"to override in the superclass.")))
 			);
-			(* Effectively adding the method, check type *)
-			checkVariance (curEnv !locEnv) methDecl.retType TMplus
+
+			(* Check type and variance *)
+			checkVariance (curEnvLoc !locEnv) methDecl.retType TMplus
 				methDecl.mLoc;
-			nClass := addMeth !nClass methDecl.mname methDecl ;
-			let bodyTyp = exprType (curEnv !locEnv) methDecl.mbody in
-			if not (isSubtype (curEnv !locEnv) bodyTyp
+			let bodyTypEx = exprType (curEnvLoc !locEnv) methDecl.mbody in
+			let bodyTyp = bodyTypEx.etyp in
+			if not (isSubtype (curEnvLoc !locEnv) bodyTyp
 					methDecl.mbody.eloc methDecl.retType) then
-				wrongTypeError methDecl.mbody.eloc bodyTyp methDecl.retType
+				wrongTypeError methDecl.mbody.eloc bodyTyp methDecl.retType ;
+
+			(* Effectively adding the method, all done*)
+			let nMeth = {
+				tmname = methDecl.mname ;
+				tparTypes = methDecl.parTypes ;
+				tmparams = methDecl.mparams ;
+				tretTyp = methDecl.retType ;
+				tmbody = bodyTypEx ;
+				toverride = methDecl.override
+			} in
+			nClass := addMeth !nClass methDecl.mname nMeth
 		)
 		cl.cbody;
-	(curEnv env)
+	nClass := { !nClass with tcbody = List.rev (!nClass.tcbody) } ;
+	!nClass, (curEnv env)
 
 let doPrgmTyping (prgm : Ast.prgm) =
 	let smap_of_list l =
@@ -894,7 +959,7 @@ let doPrgmTyping (prgm : Ast.prgm) =
 		(name, { tcname=name ; tclassTypes=[] ; tcparams=[] ;
 				 textends=
 				 	if inher <> "" then Some
-						{ extType=(inher,EmptyAType) ; param=[] }
+						{ textType=(inher,EmptyAType) ; tparam=[] }
 					else None ;
 				 tcbody=[] ; tcvars=SMap.empty ; tcmeth=SMap.empty ;
 				 tcvariance = TMneutral} )
@@ -921,36 +986,57 @@ let doPrgmTyping (prgm : Ast.prgm) =
 		classes = baseClasses ;
 		vars = SMap.empty } in
 
-	List.iter
-		(fun cl -> env := doClassTyping !env cl)
-		prgm.classes ;
+	let typedClassesList = List.rev (List.fold_left
+		(fun cur cl ->
+			let nCl,nEn = doClassTyping !env cl in
+			env := nEn ;
+			nCl::cur)
+		[] prgm.classes ) in
 
-	env := doClassTyping !env (prgm.main) ;
+	let tcmain, nEn = doClassTyping !env (prgm.main) in
+	env := nEn ;
+
 	if prgm.main.cname <> "Main" then
 		raise (TyperError (prgm.main.cLoc, ("This class is supposed to be the"^
 			" main class, yet it is not named `Main'."))) ;
-	let tcmain = (try SMap.find "Main" !env.classes 
+(*	let tcmain = (try SMap.find "Main" !env.classes 
 		with Not_found ->
 			raise (InternalError "Main class was not found, yet exists.")) in
+*)
 	let mainMeth = (try SMap.find "main" tcmain.tcmeth
 		with Not_found ->
 			raise (TyperError (prgm.main.cLoc, ("Method `main' is not "^
 				"defined in `Main' class.")))) in
+	let rec findMainLoc = function
+	| [] -> raise Not_found
+	| Dmeth(me)::tl -> if me.mname = "main" then me.mLoc else findMainLoc tl
+	| _::tl -> findMainLoc tl
+	in
+	let mainLoc = (try findMainLoc prgm.main.cbody
+		with Not_found -> raise (TyperError (prgm.main.cLoc, "The method "^
+			"main was not declared in the Main class."))) in
 
 	(* Main.main checking *)
-	if mainMeth.parTypes <> [] then
-		raise (TyperError (mainMeth.mLoc, "Main.main may not have "^
+	(if mainMeth.tparTypes <> [] then
+		raise (TyperError (mainLoc, "Main.main may not have "^
 			"type parameters."))
-	else if mainMeth.retType <> ("Unit", EmptyAType) then
-		raise (TyperError (mainMeth.mLoc, "Main.main must return Unit."))
-	else if List.length mainMeth.mparams <> 1 ||
-				snd (List.hd mainMeth.mparams) <>
+	else if mainMeth.tretTyp <> ("Unit", EmptyAType) then
+		raise (TyperError (mainLoc, "Main.main must return Unit."))
+	else if List.length mainMeth.tmparams <> 1 ||
+				snd (List.hd mainMeth.tmparams) <>
 					("Array",ArgType(["String",EmptyAType])) then
-		raise (TyperError (mainMeth.mLoc, "Main.main must have a single "^
+		raise (TyperError (mainLoc, "Main.main must have a single "^
 			"parameter of type Array[String]"))
 	else if tcmain.tclassTypes <> [] then
 		raise (TyperError (prgm.main.cLoc, "Class `Main' may not have"^
 			" type parameters."))
 	else if tcmain.tcparams <> [] then
 		raise (TyperError (prgm.main.cLoc, "Class `main' may not take "^
-			"parameters."))
+			"parameters.")));
+
+	let outPrgm = {
+			tclasses = typedClassesList ;
+			tmain = tcmain ;
+			tenvironment = !env
+		} in
+	outPrgm

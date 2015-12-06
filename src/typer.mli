@@ -21,4 +21,4 @@ exception TyperError of Ast.codeLoc * string
  *   - TyperError of loc,str when the program is badly typed
  *   - InternalError of str when the typer encountered an error
  ***)
-val doPrgmTyping : Ast.prgm -> unit
+val doPrgmTyping : Ast.prgm -> TypedAst.typPrgm
