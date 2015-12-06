@@ -885,7 +885,7 @@ let doClassTyping env cl =
 				wrongTypeError methDecl.mbody.eloc bodyTyp methDecl.retType
 		)
 		cl.cbody;
-	(curEnv !nEnv)
+	(curEnv env)
 
 let doPrgmTyping (prgm : Ast.prgm) =
 	let smap_of_list l =
