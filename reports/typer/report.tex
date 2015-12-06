@@ -1,0 +1,86 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[francais]{babel}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage[left=2cm,right=2cm,top=2cm,bottom=2cm]{geometry}
+\usepackage{my_listings}
+\author{Théophile \textsc{Bastian}}
+\title{Rapport -- Compilation, premier rendu}
+\date{6 décembre 2015}
+
+\lstdefinelanguage{scala}{
+  morekeywords={abstract,case,catch,class,def,%
+    do,else,extends,false,final,finally,%
+    for,if,implicit,import,match,mixin,%
+    new,null,object,override,package,%
+    private,protected,requires,return,sealed,%
+    super,this,throw,trait,true,try,%
+    type,val,var,while,with,yield,%
+    Any,AnyVal,Boolean,Int,Unit,AnyRef,%
+    String,Null,Nothing},
+  otherkeywords={=>,<-,<\%,<:,>:,\#,@},
+  sensitive=true,
+  morecomment=[l]{//},
+  morecomment=[n]{/*}{*/},
+  morestring=[b]",
+  morestring=[b]',
+  morestring=[b]"""
+}
+
+\begin{document}
+\maketitle
+
+\section{Utilisation}
+
+Comme indiqué dans le sujet, \emph{pscala} se compile simplement avec \lstbash{make} à la racine du projet, et crée un exécutable \lstbash{pscala}. \lstbash{make clean} nettoie toute trace de compilation et supprime l'exécutable lui-même.
+
+En plus des arguments de ligne de commande exigés (\lstbash{--parse-only} pour parser uniquement, \mbox{\lstinline`source.scala`} pour choisir le fichier à compiler en fin de commande), le paramètre \lstbash{--backtrace} peut être ajouté. Lorsqu'il est passé au programme, en cas d'erreur de typage, celui-ci affichera également une backtrace de l'exception. \'Evidemment, cette fonctionnalité ne produit une sortie cohérente que si la compilation est effectuée avec l'option \lstbash{-g} (à ajouter au Makefile dans \lstbash{FLAGS} avant de lancer \lstbash{make clean ; make}).	
+
+\section{Choix d'implémentation}
+
+Dans la globalité, l'implémentation proposée ne s'éloigne que très peu des directives du sujet. Certains points sont toutefois à noter :
+
+\begin{itemize}
+\item Dans un but de cohérence, le code, les messages d'erreur, les commentaires, \ldots{} sont en anglais.
+\item La grammaire du langage définit une constante entière comme positive~; ainsi une \og constante entière négative \fg{} n'en est en réalité pas une, mais une constante entière positive à laquelle on applique l'opérateur unaire $-$. Pour cette raison, et pour simplifier l'implémentation, j'ai considéré que $-2^{31}$ n'était pas une constante entière valide, car il s'agit de \mbox{\lstocaml{Eunaryop(UnaryMinus, Eint(}$2^{31}$\lstocaml{))}} et \lstocaml{Eint(}$2^{31}$\lstocaml{)} n'est pas valide.
+
+\item J'ai choisi de ne pas gérer les problèmes de masquage de types par des arguments de types, comme dans le cas où on aurait 
+\begin{lstlisting}[language=Scala]
+class T[Unit]() {
+	def m(x:Unit) {}
+}
+\end{lstlisting}
+où le type \lstbash{Unit} du bloc \lstbash{\{\}} est remplacé par le type de classe \lstbash{Unit}.
+\end{itemize}
+
+\vspace*{1em}
+Le code source est organisé ainsi~:
+\begin{itemize}
+\item \textbf{main.ml}~: point d'entrée du programme, appelle le reste et gère les exceptions.
+\item \textbf{typer.ml\{,i\}}~: gère toute la vérification de types.
+\item \textbf{lang/ast.ml}~: définit l'arbre de syntaxe abstraite.
+\item \textbf{lang/typedAst.ml}~: définit l'arbre de syntaxe abstraite décoré par des types.
+\item \textbf{lang/lexer.mll}~: analyse lexicale.
+\item \textbf{lang/parser.mly}~: analyse syntaxique.
+\end{itemize}
+
+\section{Lacunes, problèmes}
+
+\begin{itemize}
+\item La production d'un arbre de syntaxe abstraite décoré par des types est un ajout extrêmement récent (5min après la deadline environ), je n'ai donc pas eu beaucoup de temps pour corriger les erreurs dans cette fonctionnalité. Il est donc fortement possible qu'il reste des erreurs/que cet ajout crée des erreurs.
+\item Ayant décoré par des positions trop peu de choses, un certain nombre de positions fournies par les messages d'erreur sont imprécises. Dans le code, les endroits où ce problème existe sont annotés d'un \lstocaml{(*FIXME imprecise loc*)} ou commentaire proche. Je compte régler ce problème dans un futur proche.
+\item Comme expliqué dans la partie précédente, les substitutions de types standard par des types de classe ne sont pas gérées actuellement. Cela pose certains problèmes, mais je n'ai pas trouvé de moyen simple de corriger cette erreur (je m'en suis rendu compte après avoir un typeur passant $100\%$ des tests proposés).
+\item J'ai remarqué tardivement un problème dans mon code qui, il me semble, mériterait un test dans l'archive de tests~: la fonction d'ajout de classe renvoyait l'environnement local à la classe au lieu de l'environnement initial auquel on a ajouté la classe et ses champs, etc., ayant pour effet par exemple dans le code
+\begin{lstlisting}[language=Scala]
+class T[U] {
+	...
+}
+\end{lstlisting}
+de laisser la classe \lstbash{U} présente dans l'environnement \emph{hors} de la classe \lstbash{T}.
+\end{itemize}
+
+\end{document}
