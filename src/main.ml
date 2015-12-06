@@ -72,7 +72,10 @@ let () =
 	) in
 	close_in sourceHandle ;
 
-	if not !parseOnly then
+	if !parseOnly then
+		exit 0;
+	
+	let typAst = 
 		(try Typer.doPrgmTyping ast
 		with
 		| Typer.TyperError (pos, msg) ->
@@ -92,3 +95,7 @@ let () =
 				(Printexc.to_string ex) ;
 			printBacktrace bt ;
 			exit 2)
+	in
+	
+	(*** NOW COMPILE! ***)
+	ignore typAst (*...Or maybe not yet. *)
