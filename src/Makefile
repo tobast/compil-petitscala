@@ -31,7 +31,7 @@ $(BIN): $(CMX)
 lang/parser.ml: lang/ast.cmx
 
 clean:
-	rm -f {.,$(RECDIR)}/*{.cmi,.cmx,.o,~} $(GENERATED) lang/parser.automaton
+	rm -f {.,$(RECDIR)}/*{.cmi,.cmx,.o,~} $(GENERATED) lang/parser.automaton ${BIN}
 
 .depend depend: $(GENERATED)
 	rm -f .depend
