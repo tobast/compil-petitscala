@@ -17,3 +17,7 @@ Les tests sont cumulatifs i.e.
 - les fichiers de exec-fail/ et exec/ peuvent être
   utilisés pour la catégorie typing/good/
 
+
+AJOUTS (merci Nathanaël) :
+  typingAdd/good <=> typing/good
+  typingAdd/bad  <=> typing/bad

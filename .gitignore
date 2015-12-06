@@ -25,3 +25,5 @@ setup.log
 
 # binary
 pscala
+
+tests/*.disabled
