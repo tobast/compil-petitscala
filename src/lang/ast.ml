@@ -7,7 +7,7 @@
  * It is developped as a school project for J-C. Filliâtre's Compilation course
  * at the Ecole Normale Superieure, Paris.
  ******************************************************************************
- * File: ast.mli
+ * File: ast.ml
  *
  * Defines the AST type for Petit Scala
  *****************************************************************************)
@@ -33,7 +33,6 @@ type access =
 | AccMember of expr * ident
 
 and expr = { ex : exprVal ; eloc : codeLoc }
-and typedExpr = { tex : exprVal ; etyp : typ }
 
 and exprVal =
 | Eint of int
@@ -87,16 +86,6 @@ and classDef = {
 	extends : classExtends option; 
 	cbody : decl list ;
 	cLoc : codeLoc
-}
-and typedClass = {
-	tcname: ident ;
-	tclassTypes : paramTypeClass list ;
-	tcparams : parameter list ;
-	textends : classExtends option ;
-	tcbody : decl list ;
-	tcvars : varType SMap.t ;
-	tcmeth : meth SMap.t ;
-	tcvariance : paramTypeModifier
 }
 
 and decl = Dvar of var | Dmeth of meth

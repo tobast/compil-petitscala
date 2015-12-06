@@ -1,5 +1,5 @@
-CMX=lang/ast.cmx lang/lexer.cmx lang/parser.cmx \
-	typedefs.cmx typer.cmx main.cmx
+CMX=lang/ast.cmx lang/typedAst.cmx lang/lexer.cmx lang/parser.cmx \
+	typer.cmx main.cmx
 BIN=pscala
 GENERATED=lang/lexer.ml lang/parser.ml lang/parser.mli 
 RECDIR=lang
