@@ -26,4 +26,18 @@ setup.log
 # binary
 pscala
 
+# Generated files
+*.automaton
+src/lang/parser.ml
+src/lang/parser.mli
+src/lang/lexer.ml
+
+reports/*/*.aux
+reports/*/*.log
+reports/*/*.pdf
+reports/*/*.synctex.gz
+*.bak
+
 tests/*.disabled
+
+
