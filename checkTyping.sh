@@ -15,7 +15,7 @@ for f in tests/typing/good/*.scala tests/typingAdd/good/*.scala tests/exec/*.sca
     maxPos=`expr $maxPos + 1`;
     echo $f
     rm -f out
-    ./pscala $f > out
+    ./pscala --type-only $f > out
 	case $? in
 		0) scorePos=`expr $scorePos + 1` ;;
 		1) echo "  ECHEC du typing pour $f" ;;
@@ -30,7 +30,7 @@ for f in tests/typing/bad/*.scala tests/typingAdd/bad/* ; do
     maxNeg=`expr $maxNeg + 1`;
     echo $f
     rm -f out
-	./pscala $f > out 2>&1
+	./pscala --type-only $f > out 2>&1
 	
 	case $? in
 		0) echo "  ECHEC : le typing de $f devrait échouer" ;;

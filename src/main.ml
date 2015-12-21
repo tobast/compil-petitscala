@@ -18,13 +18,26 @@ let printBacktrace bt =
 	if !keepBacktrace then
 		eprintf "Backtrace:\n%s@?" bt
 
+let formatterOfFile s =
+	try Format.formatter_of_out_channel (open_out s)
+	with
+	| exc ->
+		eprintf "Could not open file \"%s\" for writing: %s\n"
+			s (Printexc.to_string exc);
+		exit 2
 
 (*************************** MAIN ********************************************)
 let () =
 	let parseOnly = ref false in
+	let typeOnly = ref false in
+	let outFile = ref "" in
 	let sourceFilePath = ref "" in
 	let argParams = [("--parse-only", Arg.Unit (fun () -> parseOnly := true),
 						"Stop after parsing the source file") ;
+					 ("--type-only", Arg.Unit (fun () -> typeOnly := true),
+					 	"Stop after typing the source file") ;
+					 ("-o", Arg.String (fun s -> outFile := s),
+					 	"Sets the output file. '-' for stdout.") ;
 					 ("--backtrace", Arg.Unit
 					 	(fun () -> keepBacktrace := true ;
 							Printexc.record_backtrace true),
@@ -96,7 +109,16 @@ let () =
 			printBacktrace bt ;
 			exit 2)
 	in
+
+	if !typeOnly then
+		exit 0;
 	
+	let outFormatter = (match !outFile with
+		| "-" -> Format.std_formatter
+		| "" -> formatterOfFile
+			((Filename.chop_suffix !sourceFilePath ".scala")^".s")
+		| s -> formatterOfFile s) in
+
 	(*** NOW COMPILE! ***)
 	let compiled =
 		(try Compile.compileTypPrgm typAst
@@ -109,4 +131,5 @@ let () =
 		)
 	in
 
-	printf "%a" X86_64.print_program compiled
+	fprintf outFormatter "%a@?" X86_64.print_program compiled
+
