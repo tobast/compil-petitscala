@@ -98,4 +98,15 @@ let () =
 	in
 	
 	(*** NOW COMPILE! ***)
-	ignore typAst (*...Or maybe not yet. *)
+	let compiled =
+		(try Compile.compileTypPrgm typAst
+		with
+		| Compile.InternalError msg ->
+			let bt = Printexc.get_backtrace () in
+			eprintf "Compiler internal error: %s\n@?" msg ;
+			printBacktrace bt ;
+			exit 2
+		)
+	in
+
+	printf "%a" X86_64.print_program compiled

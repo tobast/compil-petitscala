@@ -1,9 +1,11 @@
 CMX=lang/ast.cmx lang/typedAst.cmx lang/lexer.cmx lang/parser.cmx \
-	typer.cmx main.cmx
+	x86_64/x86_64.cmx \
+	typer.cmx compile.cmx main.cmx
 BIN=pscala
 GENERATED=lang/lexer.ml lang/parser.ml lang/parser.mli 
-RECDIR=lang
-FLAGS=-I $(RECDIR)
+RECDIR=lang x86_64
+INCLUDE_RECDIR=$(shell echo $(RECDIR) | sed -s 's/ / -I /g')
+FLAGS=-I $(INCLUDE_RECDIR)
 CMP=ocamlopt
 
 COMMA_RECDIR=$(shell echo $(RECDIR) | sed -s 's/ /,/g')
@@ -31,10 +33,11 @@ $(BIN): $(CMX)
 lang/parser.ml: lang/ast.cmx
 
 clean:
-	rm -f {.,$(RECDIR)}/*{.cmi,.cmx,.o,~} $(GENERATED) lang/parser.automaton ${BIN}
+	rm -f {.,$(COMMA_RECDIR)}/*{.cmi,.cmx,.o,~} $(GENERATED) \
+		lang/parser.automaton ${BIN}
 
 .depend depend: $(GENERATED)
 	rm -f .depend
-	ocamldep -I $(RECDIR) {.,$(RECDIR)}/*.{ml,mli} > .depend
+	ocamldep -I $(INCLUDE_RECDIR) {.,$(COMMA_RECDIR)}/*.{ml,mli} > .depend
 
 include .depend
