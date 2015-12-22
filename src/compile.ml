@@ -107,7 +107,7 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 | TEunaryop(UnaryMinus, exp) ->	
 	let exprComp = compileExpr exp env stackDepth in
 	{ exprComp with
-		text = exprComp.text ++ (subq (ilab "0") (reg rdi)) }
+		text = exprComp.text ++ (imulq (imm (-1)) (reg rdi)) }
 | TEbinop(op,exp1, exp2) ->
 	let exprComp1 = compileExpr exp1 env stackDepth
 	and exprComp2 = compileExpr exp2 env stackDepth in
