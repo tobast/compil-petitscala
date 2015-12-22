@@ -57,7 +57,7 @@ let prgmText t =
  * intermediary calculations?), the result of an expression is stored
  * into %rdi at the end of the code returned by compileExpr.
  ***)
-let rec compileExpr argExp = match argExp.tex with
+let rec compileExpr argExp env stackDepth = match argExp.tex with
 | TEint n ->
 	prgmText (movq (ilab (string_of_int n)) (reg rdi))
 | TEstr s ->
@@ -72,17 +72,30 @@ let rec compileExpr argExp = match argExp.tex with
 | TEunit
 | TEnull ->
 	prgmText (movq (ilab "0") (reg rdi))
+| TEaccess acc ->
+	(match acc with
+	| TAccIdent idt ->
+		let offset = (try SMap.find idt env
+			with Not_found -> raise (InternalError ("Variable '"^idt^"' not \
+				found in the current context."))
+			) in
+		{
+			text = (movq (ind ~ofs:offset rbp) (reg rdi));
+			data = nop
+		}
+	| TAccMember(expr,idt) -> assert false
+	)
 | TEunaryop(UnaryNot, exp) ->
-	let exprComp = compileExpr exp in
+	let exprComp = compileExpr exp env stackDepth in
 	{ exprComp with
 		text = exprComp.text ++ (xorq (ilab "1") (reg rdi)) }
 | TEunaryop(UnaryMinus, exp) ->	
-	let exprComp = compileExpr exp in
+	let exprComp = compileExpr exp env stackDepth in
 	{ exprComp with
 		text = exprComp.text ++ (subq (ilab "0") (reg rdi)) }
 | TEbinop(op,exp1, exp2) ->
-	let exprComp1 = compileExpr exp1
-	and exprComp2 = compileExpr exp2 in
+	let exprComp1 = compileExpr exp1 env stackDepth
+	and exprComp2 = compileExpr exp2 env stackDepth in
 	let preOp = {
 		text = exprComp1.text ++
 			pushq (reg rdi) ++
@@ -123,9 +136,9 @@ let rec compileExpr argExp = match argExp.tex with
 
 | TEif(cond,expIf,expElse) ->
 	let labelStr = nextIfId () in
-	let condComp = compileExpr cond in
-	let ifComp = compileExpr expIf
-	and elseComp = compileExpr expElse in
+	let condComp = compileExpr cond env stackDepth in
+	let ifComp = compileExpr expIf env stackDepth
+	and elseComp = compileExpr expElse env stackDepth in
 	let ifTxt = ifComp.text ++ (jmp (labelStr^"end"))
 	and elseTxt = (label (labelStr^"else")) ++ elseComp.text in
 
@@ -138,8 +151,8 @@ let rec compileExpr argExp = match argExp.tex with
 
 | TEwhile(cond,code) ->
 	let labelStr = nextWhileId () in
-	let condComp = compileExpr cond
-	and codeComp = compileExpr code in
+	let condComp = compileExpr cond env stackDepth
+	and codeComp = compileExpr code env stackDepth in
 	
 	{
 		text = (label (labelStr^"while")) ++ (condComp.text) ++
@@ -163,7 +176,7 @@ let rec compileExpr argExp = match argExp.tex with
 		         (movq (ilab "0") (reg rax)) ++
 				 (call "printf") }
 	| "Int" ->
-		let exprComp = compileExpr exp in
+		let exprComp = compileExpr exp env stackDepth in
 		{ exprComp with
 			text = exprComp.text ++
 				(movq (reg rdi) (reg rsi)) ++
@@ -176,12 +189,25 @@ let rec compileExpr argExp = match argExp.tex with
 			typed value")
 	)
 | TEblock block ->
+	let nStackDepth = ref stackDepth in
+	let nEnv = ref env in
 	List.fold_left (fun input cur -> match cur with
 		| TBexpr exp ->
-			let cPrgm = compileExpr exp in
-			{ text = input.text ++ cPrgm.text ;
-			  data = input.data ++ cPrgm.data }
-		| TBvar var -> assert false
+			let cPrgm = compileExpr exp !nEnv !nStackDepth in
+			{
+				text = input.text ++ cPrgm.text ;
+				data = input.data ++ cPrgm.data
+			}
+		| TBvar var ->
+			let valComp = compileExpr var.vexpr !nEnv !nStackDepth in
+			nStackDepth := !nStackDepth + 8;
+			nEnv := SMap.add (var.vname) (-(!nStackDepth)) !nEnv;
+			{
+				text = valComp.text ++
+					(movq (reg rdi) (ind ~ofs:(-(!nStackDepth)) rbp)) ;
+				data = valComp.data
+			}
+				
 		)
 		{text = nop ; data = nop } block
 | _ ->
@@ -193,7 +219,7 @@ let rec compileExpr argExp = match argExp.tex with
  ***)
 let wrapPrgm prgm =
 	{
-		text=(glabel "main") ++ prgm.text ++ 
+		text=(glabel "main") ++ (movq (reg rsp) (reg rbp)) ++ prgm.text ++ 
 			(movq (ilab "0") (reg rax)) ++ ret;
 		data=(label "printfIntFormat") ++ (string "%d") ++ prgm.data
 	}
@@ -203,7 +229,10 @@ let wrapPrgm prgm =
  ***)
 let compileTypPrgm prgm =
 	(* For now, only compiles the main method (TODO)*)
-	let compiled = compileExpr ((Ast.SMap.find "main" prgm.tmain.tcmeth).tmbody)
+	let compiled = compileExpr
+		((Ast.SMap.find "main" prgm.tmain.tcmeth).tmbody)
+		SMap.empty
+		0
 	in
 
 	wrapPrgm compiled
