@@ -85,6 +85,21 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		}
 	| TAccMember(expr,idt) -> assert false
 	)
+| TEassign(acc, exp) ->
+	let exprComp = compileExpr exp env stackDepth in
+	(match acc with
+	| TAccIdent idt ->
+		let offset = (try SMap.find idt env
+			with Not_found -> raise (InternalError ("Variable '"^idt^"' not \
+				found in the current context."))
+			) in
+		{
+			text = exprComp.text ++ (movq (reg rdi) (ind ~ofs:offset rbp)) ;
+			data = exprComp.data
+		}
+	| TAccMember(accExp,idt) ->
+		assert false
+	)
 | TEunaryop(UnaryNot, exp) ->
 	let exprComp = compileExpr exp env stackDepth in
 	{ exprComp with
@@ -110,7 +125,7 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	let opAction = (match op with
 		(* Arithmetic *)
 		| Plus -> addq (reg rax) (reg rdi)
-		| Minus -> subq (reg rax) (reg rdi)
+		| Minus -> (subq (reg rdi) (reg rax)) ++ (movq (reg rax) (reg rdi))
 		| Times -> imulq (reg rax) (reg rdi)
 		| Div ->
 			(movq (ilab "0") (reg rdx)) ++ (idivq (reg rdi)) ++
@@ -191,7 +206,7 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 | TEblock block ->
 	let nStackDepth = ref stackDepth in
 	let nEnv = ref env in
-	List.fold_left (fun input cur -> match cur with
+	let folded = List.fold_left (fun input cur -> match cur with
 		| TBexpr exp ->
 			let cPrgm = compileExpr exp !nEnv !nStackDepth in
 			{
@@ -203,13 +218,19 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 			nStackDepth := !nStackDepth + 8;
 			nEnv := SMap.add (var.vname) (-(!nStackDepth)) !nEnv;
 			{
-				text = valComp.text ++
+				text = input.text ++ valComp.text ++
+					(subq (imm 8) (reg rsp)) ++
 					(movq (reg rdi) (ind ~ofs:(-(!nStackDepth)) rbp)) ;
-				data = valComp.data
+				data = input.data ++ valComp.data
 			}
 				
 		)
 		{text = nop ; data = nop } block
+	in
+	{ folded with
+		text = folded.text ++
+			(addq (imm (!nStackDepth-stackDepth)) (reg rsp)) (* Restore rsp *)
+	}
 | _ ->
 	assert false
 
