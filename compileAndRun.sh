@@ -2,13 +2,13 @@
 
 debug=""
 if [ $1 = "-g" ] ; then
-	debug="-g "
+	debug="-g -O0 "
 	shift
 fi
 
 ./pscala -o "/tmp/pscala_tmp.s" "$1" && \
 	gcc $debug -o "/tmp/pscala_tmp" "/tmp/pscala_tmp.s" && \
-	/tmp/pscala_tmp
+	(if [ "$debug" = "" ] ; then /tmp/pscala_tmp ; fi)
 
 if [ "$debug" != "" ]; then
 	gdb /tmp/pscala_tmp
