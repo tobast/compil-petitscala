@@ -27,6 +27,13 @@ let nextStringId =
 		nextStringId := !nextStringId + 1 ;
 		("string"^(string_of_int !nextStringId)))
 
+let nextIfId =
+	let next = ref (-1) in
+	(fun () -> next := !next+1 ; "L"^(string_of_int !next)^"_")
+let nextWhileId =
+	let next = ref (-1) in
+	(fun () -> next := !next+1 ; "L"^(string_of_int !next)^"_while")
+
 (***
  * Inserts a string into the program data, return both its label and the
  * assembly code.
@@ -85,6 +92,8 @@ let rec compileExpr argExp = match argExp.tex with
 		data = exprComp1.data ++ exprComp2.data
 	} in
 
+	let setQReg setter = (setter (reg al)) ++ (movzbq (reg al) rdi) in
+
 	let opAction = (match op with
 		(* Arithmetic *)
 		| Plus -> addq (reg rax) (reg rdi)
@@ -97,20 +106,36 @@ let rec compileExpr argExp = match argExp.tex with
 			(movq (ilab "0") (reg rdx)) ++ (idivq (reg rdi)) ++
 			(movq (reg rdx) (reg rdi))
 		(* Logical *)
+		(* Use the setcc functions! *)
 		| KwEqual -> (*TODO*) assert false
 		| KwNEqual -> (*TODO*) assert false
-		| Equal -> (*TODO*) assert false
-		| NEqual -> (*TODO*) assert false
-		| Less -> (*TODO*) assert false
-		| Leq -> (*TODO*) assert false
-		| Greater -> (*TODO*) assert false
-		| Geq -> (*TODO*) assert false
-		| Land -> (*TODO*) assert false
-		| Lor -> (*TODO*) assert false
+		| Equal -> (cmpq (reg rdi) (reg rax)) ++ (setQReg sete)
+		| NEqual -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setne)
+		| Less -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setl)
+		| Leq -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setle)
+		| Greater -> (cmpq (reg rdi) (reg rax)) ++ (setQReg seta)
+		| Geq -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setae)
+		| Land -> andq (reg rax) (reg rdi)
+		| Lor -> orq (reg rax) (reg rdi)
 	) in
 
 	{ preOp with text = preOp.text ++ opAction }
 
+| TEif(cond,expIf,expElse) ->
+	let labelStr = nextIfId () in
+	let condComp = compileExpr cond in
+	let ifComp = compileExpr expIf
+	and elseComp = compileExpr expElse in
+	let ifTxt = ifComp.text ++ (jmp (labelStr^"end"))
+	and elseTxt = (label (labelStr^"else")) ++ elseComp.text in
+
+	{
+		text = condComp.text ++ (cmpq (ilab "0") (reg rdi)) ++ 
+			(jz (labelStr^"else")) ++
+			ifTxt ++ elseTxt ++ (label (labelStr^"end")) ;
+		data = condComp.data ++ ifComp.data ++ elseComp.data
+	}
+	
 | TEprint exp ->
 	(match fst exp.etyp with
 	| "String" ->
