@@ -135,6 +135,19 @@ let rec compileExpr argExp = match argExp.tex with
 			ifTxt ++ elseTxt ++ (label (labelStr^"end")) ;
 		data = condComp.data ++ ifComp.data ++ elseComp.data
 	}
+
+| TEwhile(cond,code) ->
+	let labelStr = nextWhileId () in
+	let condComp = compileExpr cond
+	and codeComp = compileExpr code in
+	
+	{
+		text = (label (labelStr^"while")) ++ (condComp.text) ++
+			(cmpq (ilab "0") (reg rdi)) ++ (jz (labelStr^"end")) ++
+			codeComp.text ++ (jmp (labelStr^"while")) ++
+			(label (labelStr^"end")) ;
+		data = condComp.data ++ codeComp.data
+	}
 	
 | TEprint exp ->
 	(match fst exp.etyp with
