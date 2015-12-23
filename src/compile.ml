@@ -136,8 +136,8 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 			(movq (reg rdx) (reg rdi))
 		(* Logical *)
 		(* Use the setcc functions! *)
-		| KwEqual -> (*TODO*) assert false
-		| KwNEqual -> (*TODO*) assert false
+		| KwEqual -> (cmpq (reg rdi) (reg rax)) ++ (setQReg sete)
+		| KwNEqual -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setne)
 		| Equal -> (cmpq (reg rdi) (reg rax)) ++ (setQReg sete)
 		| NEqual -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setne)
 		| Less -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setl)
