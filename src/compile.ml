@@ -186,6 +186,13 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 			(movq (imm 0) (reg rdi));
 		data = condComp.data ++ codeComp.data
 	}
+
+| TEreturn exp ->
+	let codeComp = compileExpr exp env stackDepth in
+	{
+		text = codeComp.text ++ (movq (reg rdi) (reg rax)) ++ ret ;
+		data = codeComp.data
+	}
 	
 | TEprint exp ->
 	(match fst exp.etyp with
