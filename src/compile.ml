@@ -94,7 +94,8 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 				found in the current context."))
 			) in
 		{
-			text = exprComp.text ++ (movq (reg rdi) (ind ~ofs:offset rbp)) ;
+			text = exprComp.text ++ (movq (reg rdi) (ind ~ofs:offset rbp)) ++
+				(movq (imm 0) (reg rdi));
 			data = exprComp.data
 		}
 	| TAccMember(accExp,idt) ->
@@ -173,7 +174,8 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		text = (label (labelStr^"while")) ++ (condComp.text) ++
 			(cmpq (ilab "0") (reg rdi)) ++ (jz (labelStr^"end")) ++
 			codeComp.text ++ (jmp (labelStr^"while")) ++
-			(label (labelStr^"end")) ;
+			(label (labelStr^"end")) ++
+			(movq (imm 0) (reg rdi));
 		data = condComp.data ++ codeComp.data
 	}
 	
@@ -188,16 +190,18 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		(* Add it to the data segment, print it. *)
 		{ data = dataContent ;
 		  text = (movq (ilab dataLabel) (reg rdi)) ++
-		         (movq (ilab "0") (reg rax)) ++
-				 (call "printf") }
+		         (movq (imm 0) (reg rax)) ++
+				 (call "printf") ++
+				 (movq (imm 0) (reg rdi)) }
 	| "Int" ->
 		let exprComp = compileExpr exp env stackDepth in
 		{ exprComp with
 			text = exprComp.text ++
 				(movq (reg rdi) (reg rsi)) ++
-				(movq (ilab "0") (reg rax)) ++
+				(movq (imm 0) (reg rax)) ++
 				(movq (ilab "printfIntFormat") (reg rdi)) ++
-				(call "printf")
+				(call "printf") ++
+				(movq (imm 0) (reg rdi))
 		}
 	| _ ->
 		raise (InternalError "Request print of a non-String and non-Integer \
@@ -220,7 +224,8 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 			{
 				text = input.text ++ valComp.text ++
 					(subq (imm 8) (reg rsp)) ++
-					(movq (reg rdi) (ind ~ofs:(-(!nStackDepth)) rbp)) ;
+					(movq (reg rdi) (ind ~ofs:(-(!nStackDepth)) rbp)) ++
+					(movq (imm 0) (reg rdi));
 				data = input.data ++ valComp.data
 			}
 				
