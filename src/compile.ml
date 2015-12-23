@@ -18,6 +18,14 @@ exception InternalError of string
 
 open X86_64
 
+type classMetaDescriptor = {
+	memLoc : label ; (* Location in memory *)
+	methods : int SMap.t
+		(* maps a method name to its offset in the descriptor *)
+}
+
+let metaDescriptors = ref SMap.empty
+
 (***
  * Returns a fresh new unused ID for a string label in the data block
  ***)
@@ -240,14 +248,61 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	assert false
 
 
+let buildMethod meth methLab =
+	let env = SMap.empty in (* TODO add parameters to the environment *)
+	let codeComp = compileExpr meth.tmbody env 8 in
+	let nText = (label methLab) ++ (pushq (reg rbp)) ++
+		(movq (reg rsp) (reg rbp)) ++ codeComp.text ++ (popq rbp) ++
+		(movq (reg rdi) (reg rax)) ++ ret in
+	{ codeComp with text = nText }
+
+
+let buildClassDescriptor cl =
+	(* TODO inherit and preserve order *)
+	let compiled,locs = SMap.fold (fun name code prev ->
+			let prevComp,prevLocs = prev in
+			let methLabel = "M_"^cl.tcname^"_"^name in
+			(*FIXME in this pattern, two names might be the same: eg, if
+			the user defines two classes
+			* A with method a_a,
+			* A_a with method a,
+			both labels will be M_A_a_a, which will cause conflicts... *)
+			let methComp = buildMethod code methLabel in
+			({
+				text = prevComp.text ++ methComp.text;
+				data = prevComp.data ++ methComp.data
+			},
+			(name,methLabel) :: prevLocs)
+		)
+		cl.tcmeth ({text=nop; data=nop}, []) in
+	
+	let descriptorLabel = "D_"^cl.tcname in
+
+	let addrList = List.map snd locs in
+	let dataAdd = (label descriptorLabel) ++ (dquad [0]) ++ (*FIXME temp*)
+		(address addrList)
+	in
+
+	let posMap = ref SMap.empty in
+	List.iteri (fun i x -> posMap := SMap.add (fst x) (8*(i+1)) !posMap) locs;
+
+	metaDescriptors := SMap.add cl.tcname {
+			memLoc = descriptorLabel ;
+			methods = !posMap
+		} !metaDescriptors ;
+
+	{ compiled with data = compiled.data ++ dataAdd }
+	
+
 (***
  * Wraps the given program, to add some base code to it
  ***)
-let wrapPrgm prgm =
+let wrapPrgm descriptors prgm =
 	{
 		text=(glabel "main") ++ (movq (reg rsp) (reg rbp)) ++ prgm.text ++ 
-			(movq (ilab "0") (reg rax)) ++ ret;
-		data=(label "printfIntFormat") ++ (string "%d") ++ prgm.data
+			(xorq (reg rax) (reg rax)) ++ ret ++ descriptors.text;
+		data=(label "printfIntFormat") ++ (string "%d") ++ prgm.data ++
+			descriptors.data
 	}
 
 (***
@@ -255,11 +310,18 @@ let wrapPrgm prgm =
  ***)
 let compileTypPrgm prgm =
 	(* For now, only compiles the main method (TODO)*)
+	
+	let descriptorsComp = List.fold_left (fun prev cur ->
+		let comp = buildClassDescriptor cur in
+		{ text = prev.text ++ comp.text ;
+		  data = prev.data ++ comp.data })
+		{ text=nop; data=nop } prgm.tclasses in
+
 	let compiled = compileExpr
 		((Ast.SMap.find "main" prgm.tmain.tcmeth).tmbody)
 		SMap.empty
 		0
 	in
 
-	wrapPrgm compiled
+	wrapPrgm descriptorsComp compiled
 
