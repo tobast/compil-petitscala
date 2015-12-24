@@ -85,9 +85,11 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	prgmText (movq (ilab (string_of_int n)) (reg rdi))
 | TEstr s ->
 	let dataLabel,dataContent = addDataString s in
+	let alloc = allocateBlock "String" in
 	{
 		data = dataContent ;
-		text = (movq (ilab dataLabel) (reg rdi))
+		text = alloc ++ (movq (ilab dataLabel) (reg rcx)) ++
+			(movq (reg rcx) (ind ~ofs:8 rax)) ++ (movq (reg rax) (reg rdi))
 	}
 
 | TEbool b ->
@@ -95,6 +97,9 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 | TEunit
 | TEnull ->
 	prgmText (movq (ilab "0") (reg rdi))
+| TEthis ->
+	let ofs = SMap.find "this" env in
+	prgmText (movq (ind ~ofs:ofs rbp) (reg rdi))
 | TEaccess acc ->
 	(match acc with
 	| TAccIdent idt ->
@@ -125,17 +130,30 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		assert false
 	)
 | TEcall(acc, argt, params) ->
-	let funcAddr,evalComp = (match acc with
+	let thisAddr, callComp, expData = (match acc with
 		| TAccIdent(idt) ->
-			let this = SMap.find "this" env in
-			(*TODO*) assert false
-			
-		| TAccMember(exp,idt) -> assert false
+			(raise (InternalError "Call to a TAccIdent, which is supposed to \
+				be impossible."))
+		| TAccMember(exp,idt) ->
+			let expComp = compileExpr exp env stackDepth in
+			let typ = SMap.find (fst exp.etyp) !metaDescriptors in
+			let methOffset = SMap.find idt (typ.methods) in
+			(expComp.text ++ (movq (ind rax) (reg rcx)) ++ (pushq (reg rcx)),
+				(addq (imm methOffset) (reg rcx)) ++
+				(call_star (ind rcx)), expComp.data)
 		) in
-	(*TODO handle argt, params *)
+	
+	let nbPar = List.length params in
+	let stackParams,dataParams = List.fold_left (fun (curSt, curDat) ex ->
+			let exComp = compileExpr ex env stackDepth in
+			curSt ++ exComp.text, curDat ++ exComp.data)
+		(nop,nop) params in
+
 	{
-		text = evalComp.text ++ (call_star funcAddr);
-		data = evalComp.data
+		text = thisAddr ++ stackParams ++
+			(movq (ind ~ofs:(8*nbPar) rsp) (reg rcx)) ++
+			callComp ;
+		data = expData ++ dataParams
 	}
 
 | TEunaryop(UnaryNot, exp) ->
@@ -226,14 +244,20 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 | TEprint exp ->
 	(match fst exp.etyp with
 	| "String" ->
-		let explicitStr = (match exp.tex with
-			| TEstr(s) -> s
-			| _ -> raise (InternalError "Expected a litteral string.")) in
+		let regAssign,dataAssign = (match exp.tex with
+			| TEstr(s) ->
+				let dataLabel,dataContent = addDataString s in
+				(movq (ilab dataLabel) (reg rdi)), dataContent
+			| _ ->
+				let compExpr = compileExpr exp env stackDepth in
+				(compExpr.text ++ (movq (ind rdi) (reg rcx)) ++
+					(movq (ind ~ofs:8 rcx) (reg rdi))),
+				compExpr.data
+			) in
 
-		let dataLabel,dataContent = addDataString explicitStr in
 		(* Add it to the data segment, print it. *)
-		{ data = dataContent ;
-		  text = (movq (ilab dataLabel) (reg rdi)) ++
+		{ data = dataAssign ;
+		  text = regAssign ++
 		         (movq (imm 0) (reg rax)) ++
 				 (call "printf") ++
 				 (movq (imm 0) (reg rdi)) }
@@ -285,8 +309,10 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 
 
 let buildMethod meth methLab =
-	let env = SMap.empty in (* TODO add parameters to the environment *)
-	let codeComp = compileExpr meth.tmbody env 8 in
+	let env = ref SMap.empty in
+	List.iteri (fun i par -> env := SMap.add par (16+8*i) !env)
+		(List.rev ("this"::(List.map fst meth.tmparams))) ;
+	let codeComp = compileExpr meth.tmbody !env 8 in
 	let nText = (label methLab) ++ (pushq (reg rbp)) ++
 		(movq (reg rsp) (reg rbp)) ++ codeComp.text ++ (popq rbp) ++
 		(movq (reg rdi) (reg rax)) ++ ret in
@@ -294,47 +320,49 @@ let buildMethod meth methLab =
 
 
 let buildClassDescriptor cl =
-	(* TODO inherit and preserve order *)
-	let compiled,locs = SMap.fold (fun name code prev ->
-			let prevComp,prevLocs = prev in
-			let methLabel = "M_"^cl.tcname^"_"^name in
+	let methLocs,methLabels,locs,_ = SMap.fold
+		(fun name _ (prevLocs,prevLbl,prevLocsLst,i) ->
+			let methLab = ("M_"^cl.tcname^"_"^name) in
+			(SMap.add name i prevLocs,
+			SMap.add name methLab prevLbl,
+			methLab::prevLocsLst,
+			i+8)
 			(*FIXME in this pattern, two names might be the same: eg, if
 			the user defines two classes
 			* A with method a_a,
 			* A_a with method a,
 			both labels will be M_A_a_a, which will cause conflicts... *)
-			let methComp = buildMethod code methLabel in
-			({
-				text = prevComp.text ++ methComp.text;
-				data = prevComp.data ++ methComp.data
-			},
-			(name,methLabel) :: prevLocs)
-		)
-		cl.tcmeth ({text=nop; data=nop}, []) in
-	
+		) cl.tcmeth (SMap.empty, SMap.empty, [], 8) in
+			
 	let descriptorLabel = "D_"^cl.tcname in
-
-	let addrList = List.map snd locs in
 	let dataAdd = (label descriptorLabel) ++ (dquad [0]) ++ (*FIXME temp*)
-		(address addrList)
+		(address (List.rev locs))
 	in
-
-	let posMap = ref SMap.empty in
-	List.iteri (fun i x -> posMap := SMap.add (fst x) (8*(i+1)) !posMap) locs;
 
 	metaDescriptors := SMap.add cl.tcname {
 			memLoc = descriptorLabel ;
-			methods = !posMap ;
+			methods = methLocs ;
 			vals = SMap.empty ;
 			clType = cl
 		} !metaDescriptors ;
 
-	{ compiled with data = compiled.data ++ dataAdd }
+	(* TODO inherit and preserve order *)
+	let compiled = SMap.fold (fun name code prevComp ->
+			let methLabel = SMap.find name methLabels in
+			let methComp = buildMethod code methLabel in
+			{
+				text = prevComp.text ++ methComp.text;
+				data = prevComp.data ++ methComp.data
+			}
+		)
+		cl.tcmeth ({text=nop; data=nop}) in
 	
+	{ compiled with data = compiled.data ++ dataAdd }
 
 (***
  * Wraps the given program, to add some base code to it
  ***)
+(*
 let wrapPrgm descriptors prgm =
 	{
 		text=(glabel "main") ++ (movq (reg rsp) (reg rbp)) ++ prgm.text ++ 
@@ -342,7 +370,7 @@ let wrapPrgm descriptors prgm =
 		data=(label "printfIntFormat") ++ (string "%d") ++ prgm.data ++
 			descriptors.data
 	}
-
+*)
 (***
  * Compiles a typed program
  ***)
