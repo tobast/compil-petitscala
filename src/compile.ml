@@ -20,8 +20,11 @@ open X86_64
 
 type classMetaDescriptor = {
 	memLoc : label ; (* Location in memory *)
-	methods : int SMap.t
+	methods : int SMap.t ;
 		(* maps a method name to its offset in the descriptor *)
+	vals : int SMap.t ;
+		(* maps a field name to its offset in an allocated object on the heap*)
+	clType : typedClass
 }
 
 let metaDescriptors = ref SMap.empty
@@ -58,6 +61,18 @@ let prgmText t =
 		data = nop;
 		text = t
 	}
+
+(***
+ * Returns assembly code that allocates a data block for an instantiation of
+ * clName on the heap using sbrk. After this code is executed, the segment
+ * start is found in %rax
+ ***)
+let allocateBlock clName =
+	let cl = SMap.find clName !metaDescriptors in
+	let segSize = (SMap.cardinal cl.vals + 1) * 8 in
+
+	(movq (imm segSize) (reg rdi)) ++ (call "sbrk") ++
+		(movq (ilab cl.memLoc) (ind rax))
 
 (***
  * Compiles a typed expression.
@@ -109,6 +124,20 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	| TAccMember(accExp,idt) ->
 		assert false
 	)
+| TEcall(acc, argt, params) ->
+	let funcAddr,evalComp = (match acc with
+		| TAccIdent(idt) ->
+			let this = SMap.find "this" env in
+			(*TODO*) assert false
+			
+		| TAccMember(exp,idt) -> assert false
+		) in
+	(*TODO handle argt, params *)
+	{
+		text = evalComp.text ++ (call_star funcAddr);
+		data = evalComp.data
+	}
+
 | TEunaryop(UnaryNot, exp) ->
 	let exprComp = compileExpr exp env stackDepth in
 	{ exprComp with
@@ -295,7 +324,9 @@ let buildClassDescriptor cl =
 
 	metaDescriptors := SMap.add cl.tcname {
 			memLoc = descriptorLabel ;
-			methods = !posMap
+			methods = !posMap ;
+			vals = SMap.empty ;
+			clType = cl
 		} !metaDescriptors ;
 
 	{ compiled with data = compiled.data ++ dataAdd }
@@ -316,19 +347,32 @@ let wrapPrgm descriptors prgm =
  * Compiles a typed program
  ***)
 let compileTypPrgm prgm =
-	(* For now, only compiles the main method (TODO)*)
-	
 	let descriptorsComp = List.fold_left (fun prev cur ->
-		let comp = buildClassDescriptor cur in
-		{ text = prev.text ++ comp.text ;
-		  data = prev.data ++ comp.data })
-		{ text=nop; data=nop } prgm.tclasses in
+			let comp = buildClassDescriptor cur in
+			{ text = prev.text ++ comp.text ;
+			  data = prev.data ++ comp.data })
+		(buildClassDescriptor prgm.tmain) prgm.tclasses in
 
+(*
 	let compiled = compileExpr
 		((Ast.SMap.find "main" prgm.tmain.tcmeth).tmbody)
 		SMap.empty
 		0
 	in
-
 	wrapPrgm descriptorsComp compiled
+*)
+
+	let mainDescriptor = SMap.find "Main" !metaDescriptors in
+	{
+		text = (glabel "main") ++ (allocateBlock "Main") ++
+			(pushq (reg rax)) ++ (pushq (imm 0)) ++
+			(movq (ind rax) (reg rcx)) ++
+			(addq (imm (SMap.find "main" mainDescriptor.methods)) (reg rcx)) ++
+			(call_star (ind rcx)) ++
+			(popq rax) ++ (popq rax) ++
+			(xorq (reg rax) (reg rax)) ++ ret ++
+			descriptorsComp.text;
+		data = (label "printfIntFormat") ++ (string "%d") ++
+			descriptorsComp.data
+	}
 
