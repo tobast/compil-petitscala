@@ -479,8 +479,8 @@ and exprType env exp : typExpr = match exp.ex with
 	
 	let classType, tyAcc, methName, accLoc = (match acc with
 		| AccIdent(id) ->
-			((exprType env {ex=Ethis;eloc=exp.eloc}).etyp, TAccIdent(id),
-			id, exp.eloc)
+			let thisType = exprType env {ex=Ethis; eloc=exp.eloc} in
+			(thisType.etyp, TAccMember(thisType,id), id, exp.eloc)
 		| AccMember(clExp,id) ->
 			let clExpTyp = exprType env clExp in
 			(clExpTyp.etyp, TAccMember(clExpTyp,id), id, clExp.eloc)
