@@ -158,6 +158,14 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		data = expData ++ dataParams
 	}
 
+| TEinstantiate(idt, _, params) ->
+	let alloc = (allocateBlock idt) in
+	{
+		text = alloc ++ (movq (reg rax) (reg rdi)) ;
+		(* TODO params *)
+		data = nop
+	}
+
 | TEunaryop(UnaryNot, exp) ->
 	let exprComp = compileExpr exp env stackDepth in
 	{ exprComp with
@@ -305,8 +313,6 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		text = folded.text ++
 			(addq (imm (!nStackDepth-stackDepth)) (reg rsp)) (* Restore rsp *)
 	}
-| _ ->
-	assert false
 
 
 let buildMethod meth methLab =
@@ -357,6 +363,7 @@ let buildClassDescriptor cl =
 			}
 		)
 		cl.tcmeth ({text=nop; data=nop}) in
+	Format.eprintf "Described %s\n@?" cl.tcname ;
 	
 	{ compiled with data = compiled.data ++ dataAdd }
 
@@ -393,7 +400,7 @@ let compileTypPrgm prgm =
 	let mkBaseClassNF = mkBaseClass [] in
 	let buildClasses = [
 			mkBaseClass ["data"] "String" "AnyRef"
-		] @ (prgm.tmain :: prgm.tclasses) in
+		] @ (prgm.tclasses) @ [prgm.tmain] in
 
 	let descriptorsComp = List.fold_left (fun prev cur ->
 			let comp = buildClassDescriptor cur in
