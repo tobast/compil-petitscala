@@ -138,7 +138,7 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 			let expComp = compileExpr exp env stackDepth in
 			let typ = SMap.find (fst exp.etyp) !metaDescriptors in
 			let methOffset = SMap.find idt (typ.methods) in
-			(expComp.text ++ (movq (ind rax) (reg rcx)) ++ (pushq (reg rcx)),
+			(expComp.text ++ (movq (ind rdi) (reg rcx)) ++ (pushq (reg rcx)),
 				(addq (imm methOffset) (reg rcx)) ++
 				(call_star (ind rcx)), expComp.data)
 		) in
@@ -146,13 +146,15 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	let nbPar = List.length params in
 	let stackParams,dataParams = List.fold_left (fun (curSt, curDat) ex ->
 			let exComp = compileExpr ex env stackDepth in
-			curSt ++ exComp.text, curDat ++ exComp.data)
+			curSt ++ exComp.text ++ (pushq (reg rdi)), curDat ++ exComp.data)
 		(nop,nop) params in
+	
+	let unstackParams = (addq (imm (8*(List.length params + 1))) (reg rsp)) in
 
 	{
 		text = thisAddr ++ stackParams ++
 			(movq (ind ~ofs:(8*nbPar) rsp) (reg rcx)) ++
-			callComp ;
+			callComp ++ unstackParams ;
 		data = expData ++ dataParams
 	}
 
@@ -250,8 +252,7 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 				(movq (ilab dataLabel) (reg rdi)), dataContent
 			| _ ->
 				let compExpr = compileExpr exp env stackDepth in
-				(compExpr.text ++ (movq (ind rdi) (reg rcx)) ++
-					(movq (ind ~ofs:8 rcx) (reg rdi))),
+				(compExpr.text ++ (movq (ind ~ofs:8 rdi) (reg rdi))),
 				compExpr.data
 			) in
 
@@ -375,20 +376,30 @@ let wrapPrgm descriptors prgm =
  * Compiles a typed program
  ***)
 let compileTypPrgm prgm =
+	(* Adds the base classes the way we want them to be *)
+	let mkBaseClass fields name extends =
+		let dummyVar = false,("",EmptyAType) in
+		{
+			tcname = name ;
+			tclassTypes = [];
+			tcparams = [];
+			textends = Some {textType = extends,EmptyAType ; tparam=[]};
+			tcbody = [];
+			tcvars = List.fold_left (fun cur n ->
+				SMap.add n dummyVar cur) SMap.empty fields ;
+			tcmeth = SMap.empty ;
+			tcvariance = TMneutral
+		} in
+	let mkBaseClassNF = mkBaseClass [] in
+	let buildClasses = [
+			mkBaseClass ["data"] "String" "AnyRef"
+		] @ (prgm.tmain :: prgm.tclasses) in
+
 	let descriptorsComp = List.fold_left (fun prev cur ->
 			let comp = buildClassDescriptor cur in
 			{ text = prev.text ++ comp.text ;
 			  data = prev.data ++ comp.data })
-		(buildClassDescriptor prgm.tmain) prgm.tclasses in
-
-(*
-	let compiled = compileExpr
-		((Ast.SMap.find "main" prgm.tmain.tcmeth).tmbody)
-		SMap.empty
-		0
-	in
-	wrapPrgm descriptorsComp compiled
-*)
+		{text=nop;data=nop} buildClasses in
 
 	let mainDescriptor = SMap.find "Main" !metaDescriptors in
 	{
