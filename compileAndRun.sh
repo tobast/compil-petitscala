@@ -10,10 +10,11 @@ fi
 	gcc $debug -o "/tmp/pscala_tmp" "/tmp/pscala_tmp.s" && \
 	(if [ "$debug" = "" ] ; then /tmp/pscala_tmp ; fi)
 
+out=$?
+if (( $out > 0 )); then exit $out; fi
+
 if [ "$debug" != "" ]; then
 	gdb /tmp/pscala_tmp
 fi
-
->&2 echo "[[return code: $?]]"
 
 rm -f /tmp/pscala_tmp{.s,}
