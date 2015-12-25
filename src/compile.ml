@@ -44,6 +44,9 @@ let nextIfId =
 let nextWhileId =
 	let next = ref (-1) in
 	(fun () -> next := !next+1 ; "L"^(string_of_int !next)^"_while")
+let nextMethLabel =
+	let next = ref (-1) in
+	(fun () -> next := !next+1 ; (string_of_int !next))
 
 (***
  * Inserts a string into the program data, return both its label and the
@@ -329,16 +332,11 @@ let buildMethod meth methLab =
 let buildClassDescriptor cl =
 	let methLocs,methLabels,locs,_ = SMap.fold
 		(fun name _ (prevLocs,prevLbl,prevLocsLst,i) ->
-			let methLab = ("M_"^cl.tcname^"_"^name) in
+			let methLab = ("M"^(nextMethLabel ())^"_"^cl.tcname^"_"^name) in
 			(SMap.add name i prevLocs,
 			SMap.add name methLab prevLbl,
 			methLab::prevLocsLst,
 			i+8)
-			(*FIXME in this pattern, two names might be the same: eg, if
-			the user defines two classes
-			* A with method a_a,
-			* A_a with method a,
-			both labels will be M_A_a_a, which will cause conflicts... *)
 		) cl.tcmeth (SMap.empty, SMap.empty, [], 8) in
 			
 	let descriptorLabel = "D_"^cl.tcname in
