@@ -415,15 +415,15 @@ and exprType env exp : typExpr = match exp.ex with
 	with Not_found -> raise (InternalError ("Value `this' was not "^
 		"declared in this scope.")))
 | Eaccess(AccIdent(id)) ->
-	{ tex = TEaccess(TAccIdent(id)) ;
-	  etyp=
-		(try
-			snd (SMap.find id env.vars)
-		with Not_found ->
-			(exprType env {ex=Eaccess(AccMember(
-							{ex=Ethis;eloc=exp.eloc},id)) ;
-						  eloc=exp.eloc }).etyp)
-	}
+	(try
+		let ty = snd (SMap.find id env.vars) in
+		{ tex = TEaccess(TAccIdent(id)) ; etyp = ty }
+	with Not_found ->
+		exprType env {
+				ex=Eaccess(AccMember({ex=Ethis;eloc=exp.eloc},id)) ;
+				eloc=exp.eloc
+			}
+	)
 | Eaccess(AccMember(aexp,id)) ->
 	let subTypExp = exprType env aexp in
 	let subTyp = subTypExp.etyp in
