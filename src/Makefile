@@ -5,7 +5,7 @@ BIN=pscala
 GENERATED=lang/lexer.ml lang/parser.ml lang/parser.mli 
 RECDIR=lang x86_64
 INCLUDE_RECDIR=$(shell echo $(RECDIR) | sed -s 's/ / -I /g')
-FLAGS=-I $(INCLUDE_RECDIR)
+FLAGS=-g -I $(INCLUDE_RECDIR)
 CMP=ocamlopt
 
 COMMA_RECDIR=$(shell echo $(RECDIR) | sed -s 's/ /,/g')
