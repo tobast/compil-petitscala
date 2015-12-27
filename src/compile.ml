@@ -18,6 +18,11 @@ exception InternalError of string
 
 open X86_64
 
+type dataLocation =
+	| Here							(* Right where we are pointing *)
+	| FollowPtr of dataLocation		(* Follow the address of the pointer *)
+	| Offset of int * dataLocation	(* Add an offset *)
+
 type classMetaDescriptor = {
 	memLoc : label ; (* Location in memory *)
 	methods : int SMap.t ;
@@ -65,6 +70,16 @@ let prgmText t =
 		text = t
 	}
 
+
+(***
+ * Returns a code following a location from the address in %rdx and putting it
+ * in %rdx.
+ ***)
+let rec followLocation = function
+| Here -> nop
+| FollowPtr(next) -> movq (ind rdx) (reg rdx) ++ (followLocation next)
+| Offset (offset, next) -> addq (imm offset) (reg rdx) ++ (followLocation next)
+
 (***
  * Returns assembly code that allocates a data block for an instantiation of
  * clName on the heap using sbrk. After this code is executed, the segment
@@ -102,7 +117,7 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	prgmText (movq (ilab "0") (reg rdi))
 | TEthis ->
 	let ofs = SMap.find "this" env in
-	prgmText (movq (ind ~ofs:ofs rbp) (reg rdi))
+	prgmText ((movq (reg rbp) (reg rdx)) ++ (followLocation ofs))
 | TEaccess acc ->
 	(match acc with
 	| TAccIdent idt ->
@@ -111,7 +126,8 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 				found in the current context."))
 			) in
 		{
-			text = (movq (ind ~ofs:offset rbp) (reg rdi));
+			text = (movq (reg rbp) (reg rdx)) ++ (followLocation offset) ++
+				(movq (ind rdx) (reg rdi));
 			data = nop
 		}
 	| TAccMember(expr,idt) -> assert false
@@ -125,7 +141,8 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 				found in the current context."))
 			) in
 		{
-			text = exprComp.text ++ (movq (reg rdi) (ind ~ofs:offset rbp)) ++
+			text = exprComp.text ++ (movq (reg rbp) (reg rdx)) ++
+				(followLocation offset) ++ (movq (reg rdi) (ind rdx)) ++
 				(movq (imm 0) (reg rdi));
 			data = exprComp.data
 		}
@@ -300,7 +317,8 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		| TBvar var ->
 			let valComp = compileExpr var.vexpr !nEnv !nStackDepth in
 			nStackDepth := !nStackDepth + 8;
-			nEnv := SMap.add (var.vname) (-(!nStackDepth)) !nEnv;
+			nEnv := SMap.add (var.vname)
+				(Offset ( (-(!nStackDepth)), Here)) !nEnv;
 			{
 				text = input.text ++ valComp.text ++
 					(subq (imm 8) (reg rsp)) ++
@@ -320,7 +338,7 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 
 let buildMethod meth methLab =
 	let env = ref SMap.empty in
-	List.iteri (fun i par -> env := SMap.add par (16+8*i) !env)
+	List.iteri (fun i par -> env := SMap.add par (Offset (16+8*i, Here)) !env)
 		(List.rev ("this"::(List.map fst meth.tmparams))) ;
 	let codeComp = compileExpr meth.tmbody !env 8 in
 	let nText = (label methLab) ++ (pushq (reg rbp)) ++
@@ -330,6 +348,10 @@ let buildMethod meth methLab =
 
 
 let buildClassDescriptor cl =
+	let varsLocs = let next = ref 0 in SMap.fold (fun name var prev ->
+			next := !next + 1 ;
+			SMap.add name !next prev
+		) cl.tcvars SMap.empty in
 	let methLocs,methLabels,locs,_ = SMap.fold
 		(fun name _ (prevLocs,prevLbl,prevLocsLst,i) ->
 			let methLab = ("M"^(nextMethLabel ())^"_"^cl.tcname^"_"^name) in
@@ -347,7 +369,7 @@ let buildClassDescriptor cl =
 	metaDescriptors := SMap.add cl.tcname {
 			memLoc = descriptorLabel ;
 			methods = methLocs ;
-			vals = SMap.empty ;
+			vals = varsLocs ;
 			clType = cl
 		} !metaDescriptors ;
 
@@ -361,7 +383,6 @@ let buildClassDescriptor cl =
 			}
 		)
 		cl.tcmeth ({text=nop; data=nop}) in
-	Format.eprintf "Described %s\n@?" cl.tcname ;
 	
 	{ compiled with data = compiled.data ++ dataAdd }
 
