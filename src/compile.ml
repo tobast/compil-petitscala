@@ -486,13 +486,7 @@ let compileTypPrgm prgm =
 		0 in
 
 	{
-		text = (glabel "main") ++ (*
-			(allocateBlock "Main") ++
-			(pushq (reg rax)) ++ (pushq (imm 0)) ++
-			(movq (ind rax) (reg rcx)) ++
-			(addq (imm (SMap.find "main" mainDescriptor.methods)) (reg rcx)) ++
-			(call_star (ind rcx)) ++
-			(popq rax) ++ (popq rax) ++ *)
+		text = (glabel "main") ++
 			callMainComp.text ++
 			(xorq (reg rax) (reg rax)) ++ ret ++
 			descriptorsComp.text;
