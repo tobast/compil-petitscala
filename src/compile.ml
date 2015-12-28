@@ -117,7 +117,8 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	prgmText (movq (ilab "0") (reg rdi))
 | TEthis ->
 	let ofs = SMap.find "this" env in
-	prgmText ((movq (reg rbp) (reg rdx)) ++ (followLocation ofs))
+	prgmText ((movq (reg rbp) (reg rdx)) ++ (followLocation ofs) ++
+		(movq (ind rdx) (reg rdi)))
 | TEaccess acc ->
 	(match acc with
 	| TAccIdent idt ->
@@ -130,7 +131,15 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 				(movq (ind rdx) (reg rdi));
 			data = nop
 		}
-	| TAccMember(expr,idt) -> assert false
+	| TAccMember(expr,idt) ->
+		let metaDescr = SMap.find (fst expr.etyp) !metaDescriptors in
+		let ofs = Offset(SMap.find idt metaDescr.vals, Here) in
+		let compExpr = compileExpr expr env stackDepth in
+		{
+			text = compExpr.text ++ (movq (reg rdi) (reg rdx)) ++
+				(followLocation ofs) ++ (movq (ind rdx) (reg rdi)) ;
+			data = compExpr.data
+		}
 	)
 | TEassign(acc, exp) ->
 	let exprComp = compileExpr exp env stackDepth in
@@ -147,7 +156,16 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 			data = exprComp.data
 		}
 	| TAccMember(accExp,idt) ->
-		assert false
+		let metaDescr = SMap.find (fst accExp.etyp) !metaDescriptors in
+		let ofs = Offset(SMap.find idt metaDescr.vals, Here) in
+		let compAcc = compileExpr accExp env stackDepth in
+		{
+			text = exprComp.text ++ (pushq (reg rdi)) ++
+				compAcc.text ++ (movq (reg rdi) (reg rdx)) ++
+				(followLocation ofs) ++ (popq rdi) ++
+				(movq (reg rdi) (ind rdx)) ++ (movq (imm 0) (reg rdi)) ;
+			data = exprComp.data ++ compAcc.data
+		}
 	)
 | TEcall(acc, argt, params) ->
 	let thisAddr, callComp, expData = (match acc with
@@ -158,9 +176,10 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 			let expComp = compileExpr exp env stackDepth in
 			let typ = SMap.find (fst exp.etyp) !metaDescriptors in
 			let methOffset = SMap.find idt (typ.methods) in
-			(expComp.text ++ (movq (ind rdi) (reg rcx)) ++ (pushq (reg rcx)),
-				(addq (imm methOffset) (reg rcx)) ++
-				(call_star (ind rcx)), expComp.data)
+			(expComp.text ++ (pushq (reg rdi)),
+				(movq (ind rdx) (reg rdx)) ++
+				(addq (imm methOffset) (reg rdx)) ++ (call_star (ind rdx)),
+				expComp.data)
 		) in
 	
 	let nbPar = List.length params in
@@ -173,8 +192,8 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 
 	{
 		text = thisAddr ++ stackParams ++
-			(movq (ind ~ofs:(8*nbPar) rsp) (reg rcx)) ++
-			callComp ++ unstackParams ;
+			(movq (ind ~ofs:(8*nbPar) rsp) (reg rdx)) ++
+			callComp ++ unstackParams ++ (movq (reg rdi) (reg rax));
 		data = expData ++ dataParams
 	}
 
@@ -321,8 +340,9 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 				(Offset ( (-(!nStackDepth)), Here)) !nEnv;
 			{
 				text = input.text ++ valComp.text ++
-					(subq (imm 8) (reg rsp)) ++
-					(movq (reg rdi) (ind ~ofs:(-(!nStackDepth)) rbp)) ++
+					(*(subq (imm 8) (reg rsp)) ++
+					(movq (reg rdi) (ind ~ofs:(-(!nStackDepth)) rbp)) ++ *)
+					(pushq (reg rdi)) ++
 					(movq (imm 0) (reg rdi));
 				data = input.data ++ valComp.data
 			}
@@ -336,11 +356,11 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	}
 
 
-let buildMethod meth methLab =
+let buildMethod meth methLab env =
 	let env = ref SMap.empty in
 	List.iteri (fun i par -> env := SMap.add par (Offset (16+8*i, Here)) !env)
 		(List.rev ("this"::(List.map fst meth.tmparams))) ;
-	let codeComp = compileExpr meth.tmbody !env 8 in
+	let codeComp = compileExpr meth.tmbody !env 0 in
 	let nText = (label methLab) ++ (pushq (reg rbp)) ++
 		(movq (reg rsp) (reg rbp)) ++ codeComp.text ++ (popq rbp) ++
 		(movq (reg rdi) (reg rax)) ++ ret in
@@ -348,8 +368,9 @@ let buildMethod meth methLab =
 
 
 let buildClassDescriptor cl =
+	let env = SMap.empty in (*TODO add constructor fields *)
 	let varsLocs = let next = ref 0 in SMap.fold (fun name var prev ->
-			next := !next + 1 ;
+			next := !next + 8 ;
 			SMap.add name !next prev
 		) cl.tcvars SMap.empty in
 	let methLocs,methLabels,locs,_ = SMap.fold
@@ -376,7 +397,7 @@ let buildClassDescriptor cl =
 	(* TODO inherit and preserve order *)
 	let compiled = SMap.fold (fun name code prevComp ->
 			let methLabel = SMap.find name methLabels in
-			let methComp = buildMethod code methLabel in
+			let methComp = buildMethod code methLabel env in
 			{
 				text = prevComp.text ++ methComp.text;
 				data = prevComp.data ++ methComp.data
