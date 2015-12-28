@@ -198,8 +198,25 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	}
 
 | TEinstantiate(idt, _, params) ->
-	let alloc = (allocateBlock idt) in
 	let metaDescr = SMap.find idt !metaDescriptors in
+	let rec makeEvalParams cur = function
+	| [],[] -> cur
+	| fHead::fTail, curParam::ptail ->
+			let compParam = compileExpr curParam env stackDepth in
+			let offset = SMap.find (fst fHead) metaDescr.vals in
+			makeEvalParams {
+					text = cur.text ++ compParam.text ++ (popq rdx) ++
+						(movq (reg rdi) (ind ~ofs:offset rdx)) ++
+						(pushq (reg rdx)) ;
+					data = cur.data ++ compParam.data
+				} (fTail, ptail)
+	| _,_ -> raise (InternalError ("Wrong number of parameters. What the hell \
+		did the typer?!"))
+	in
+		
+	let alloc = (allocateBlock idt) in
+	let evalParams = makeEvalParams {text=nop;data=nop}
+		(metaDescr.clType.tcparams, params) in
 
 	(* To make the program behave as if `this' was the class we're building
 	 in order to fill the objects' fields, we fake a function start on the
@@ -223,10 +240,13 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		{text = nop ; data = nop}
 		metaDescr.clType.tcbody in (* Keeping the order might be necessary *)
 	{
-		text = alloc ++ chThis ++ (pushq (reg rax)) ++ fieldsInit.text ++
+		text = alloc ++ (* Allocate *)
+			(* Evaluate parameters *)
+			(pushq (reg rax)) ++ evalParams.text ++ (popq rax) ++
+			(* Initialize class fields *)
+			chThis ++ (pushq (reg rax)) ++ fieldsInit.text ++
 			(popq rax) ++ unchThis ++ (movq (reg rax) (reg rdi));
-		(* TODO params *)
-		data = fieldsInit.data
+		data = evalParams.data ++ fieldsInit.data
 	}
 
 | TEunaryop(UnaryNot, exp) ->
@@ -310,7 +330,13 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 | TEreturn exp ->
 	let codeComp = compileExpr exp env stackDepth in
 	{
-		text = codeComp.text ++ (movq (reg rdi) (reg rax)) ++ ret ;
+		text =
+			(* Evaluate return value *)
+			codeComp.text ++ (movq (reg rdi) (reg rax)) ++
+			(* Restore stack *)
+			(addq (imm stackDepth) (reg rsp)) ++ (popq rbp) ++
+			(* Return *)
+			ret ;
 		data = codeComp.data
 	}
 	
@@ -364,8 +390,6 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 				(Offset ( (-(!nStackDepth)), Here)) !nEnv;
 			{
 				text = input.text ++ valComp.text ++
-					(*(subq (imm 8) (reg rsp)) ++
-					(movq (reg rdi) (ind ~ofs:(-(!nStackDepth)) rbp)) ++ *)
 					(pushq (reg rdi)) ++
 					(movq (imm 0) (reg rdi));
 				data = input.data ++ valComp.data
@@ -392,11 +416,16 @@ let buildMethod meth methLab env =
 
 
 let buildClassDescriptor cl =
-	let env = SMap.empty in (*TODO add constructor fields *)
+	let env = SMap.empty in
 	let varsLocs = let next = ref 0 in SMap.fold (fun name var prev ->
+			(* Add fields as vars *)
 			next := !next + 8 ;
 			SMap.add name !next prev
-		) cl.tcvars SMap.empty in
+		) cl.tcvars
+		(List.fold_left (fun prev cur -> (* Add class parameters as vars *)
+				next := !next + 8 ;
+				SMap.add (fst cur) !next prev)
+			SMap.empty cl.tcparams) in
 	let methLocs,methLabels,locs,_ = SMap.fold
 		(fun name _ (prevLocs,prevLbl,prevLocsLst,i) ->
 			let methLab = ("M"^(nextMethLabel ())^"_"^cl.tcname^"_"^name) in
@@ -431,18 +460,6 @@ let buildClassDescriptor cl =
 	
 	{ compiled with data = compiled.data ++ dataAdd }
 
-(***
- * Wraps the given program, to add some base code to it
- ***)
-(*
-let wrapPrgm descriptors prgm =
-	{
-		text=(glabel "main") ++ (movq (reg rsp) (reg rbp)) ++ prgm.text ++ 
-			(xorq (reg rax) (reg rax)) ++ ret ++ descriptors.text;
-		data=(label "printfIntFormat") ++ (string "%d") ++ prgm.data ++
-			descriptors.data
-	}
-*)
 (***
  * Compiles a typed program
  ***)
