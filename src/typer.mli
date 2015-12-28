@@ -16,7 +16,7 @@ exception InternalError of string
 exception TyperError of Ast.codeLoc * string
 
 (***
- * Types the program. TODO return a type-decorated AST instead of Unit!
+ * Types the program. Returns a type-decorated AST.
  * Raises:
  *   - TyperError of loc,str when the program is badly typed
  *   - InternalError of str when the typer encountered an error
