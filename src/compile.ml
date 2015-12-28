@@ -199,10 +199,34 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 
 | TEinstantiate(idt, _, params) ->
 	let alloc = (allocateBlock idt) in
+	let metaDescr = SMap.find idt !metaDescriptors in
+
+	(* To make the program behave as if `this' was the class we're building
+	 in order to fill the objects' fields, we fake a function start on the
+	 stack, then reference `this' as rbp-8 *)
+	let chThis = (pushq (reg rbp)) ++ (movq (reg rsp) (reg rbp))
+	and unchThis = (popq rbp) in
+	let clEnv = SMap.singleton "this" (Offset(-8,Here)) in
+
+	let fieldsInit = List.fold_left (fun curPrgm decl -> match decl with
+			| TDmeth(_) -> curPrgm
+			| TDvar(var) ->
+				let compExpr = compileExpr var.vexpr clEnv stackDepth in
+				let offset = SMap.find var.vname metaDescr.vals in
+				{
+					text = curPrgm.text ++ compExpr.text ++ (pushq (reg rdi)) ++
+						(movq (ind ~ofs:(-8) rbp) (reg rdx)) ++
+						(popq rdi) ++ (movq (reg rdi) (ind ~ofs:offset rdx)) ;
+					data = curPrgm.data ++ compExpr.data
+				}
+		)
+		{text = nop ; data = nop}
+		metaDescr.clType.tcbody in (* Keeping the order might be necessary *)
 	{
-		text = alloc ++ (movq (reg rax) (reg rdi)) ;
+		text = alloc ++ chThis ++ (pushq (reg rax)) ++ fieldsInit.text ++
+			(popq rax) ++ unchThis ++ (movq (reg rax) (reg rdi));
 		(* TODO params *)
-		data = nop
+		data = fieldsInit.data
 	}
 
 | TEunaryop(UnaryNot, exp) ->
