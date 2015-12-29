@@ -793,7 +793,8 @@ let doClassTyping env (cl : Ast.classDef) : typedClass * typingEnvironment =
 
 	(* Check that we can construct the inherited class *)
 	let makeTypeExtends = function
-	| None -> None
+	| None ->
+		Some { textType = ("AnyRef", EmptyAType) ; tparam = [] }
 	| Some ext ->
 		Some { textType = ext.extType ;
 			tparam = List.map (exprType !nEnv) ext.param }
@@ -1009,10 +1010,6 @@ let doPrgmTyping (prgm : Ast.prgm) =
 	if prgm.main.cname <> "Main" then
 		raise (TyperError (prgm.main.cLoc, ("This class is supposed to be the"^
 			" main class, yet it is not named `Main'."))) ;
-(*	let tcmain = (try SMap.find "Main" !env.classes 
-		with Not_found ->
-			raise (InternalError "Main class was not found, yet exists.")) in
-*)
 	let mainMeth = (try SMap.find "main" tcmain.tcmeth
 		with Not_found ->
 			raise (TyperError (prgm.main.cLoc, ("Method `main' is not "^
