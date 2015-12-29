@@ -455,6 +455,11 @@ and exprType env exp : typExpr = match exp.ex with
 | Einstantiate(id,argt,params) ->
 	checkWellFormed env (id,argt) exp.eloc ;
 	let cl = findClass id env exp.eloc in
+
+	if SSet.mem id env.paramTypes then
+		raise (TyperError (exp.eloc, ("Instantiation of a type parameter \
+			class \""^id^"\" is not authorized.")));
+
 	let rec checkPar formal par out = match (formal,par) with
 	| [],[] -> List.rev out
 	| _,[]|[],_ -> raise (TyperError (exp.eloc, ("Got more/less parameters "^
@@ -719,7 +724,9 @@ let doClassTyping env (cl : Ast.classDef) : typedClass * typingEnvironment =
 						nClass
 					| _ -> nClass)
 				in
-				envRef := addClass !envRef parTy.name nClass)
+				let cnEnv =addClass !envRef parTy.name nClass in
+				envRef := { cnEnv with
+					paramTypes = SSet.add parTy.name cnEnv.paramTypes } )
 			parTyps
 	in
 
@@ -747,7 +754,9 @@ let doClassTyping env (cl : Ast.classDef) : typedClass * typingEnvironment =
 		} in
 	let nClass = ref
 		(match cl.extends with
-		| None -> nClass
+		| None ->
+			{ nClass with textends =
+				Some {textType=("AnyRef",EmptyAType) ; tparam=[]} }
 		| Some t ->
 			checkVariance !nEnv t.extType TMplus cl.cLoc ;
 			if List.mem (fst t.extType) ["Any";"AnyVal";"Unit";"Int";
@@ -984,7 +993,8 @@ let doPrgmTyping (prgm : Ast.prgm) =
 		} baseClasses in
 	let env = ref { suptypeDecl = SMap.empty ;
 		classes = baseClasses ;
-		vars = SMap.empty } in
+		vars = SMap.empty ;
+		paramTypes = SSet.empty } in
 
 	let typedClassesList = List.rev (List.fold_left
 		(fun cur cl ->

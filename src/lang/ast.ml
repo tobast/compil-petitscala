@@ -17,6 +17,7 @@ parser files *)
 exception Parsing_error of string
 
 module SMap = Map.Make(String)
+module SSet = Set.Make(String)
 
 type codeLoc = { loc_beg : Lexing.position ; loc_end : Lexing.position }
 

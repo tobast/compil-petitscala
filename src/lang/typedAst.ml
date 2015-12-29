@@ -84,5 +84,6 @@ and typPrgm = {
 and typingEnvironment = {
 	suptypeDecl : (typ list) SMap.t ;
 	classes : typedClass SMap.t ;
-	vars : varType SMap.t
+	vars : varType SMap.t ;
+	paramTypes : SSet.t (* Contains the class names of type parameters *)
 }
