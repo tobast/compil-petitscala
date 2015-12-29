@@ -27,8 +27,13 @@ type classMetaDescriptor = {
 	memLoc : label ; (* Location in memory *)
 	methods : int SMap.t ;
 		(* maps a method name to its offset in the descriptor *)
+	methLabels : label SMap.t ;
+		(* maps a method name to its label in the assembly. Useful for
+		inheritance. *)
 	vals : int SMap.t ;
 		(* maps a field name to its offset in an allocated object on the heap*)
+	valsOrder : typVar list ;
+		(* Lists the fields in the order they must be allocated. *)
 	clType : typedClass
 }
 
@@ -225,20 +230,18 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	and unchThis = (popq rbp) in
 	let clEnv = SMap.singleton "this" (Offset(-8,Here)) in
 
-	let fieldsInit = List.fold_left (fun curPrgm decl -> match decl with
-			| TDmeth(_) -> curPrgm
-			| TDvar(var) ->
-				let compExpr = compileExpr var.vexpr clEnv stackDepth in
-				let offset = SMap.find var.vname metaDescr.vals in
-				{
-					text = curPrgm.text ++ compExpr.text ++ (pushq (reg rdi)) ++
-						(movq (ind ~ofs:(-8) rbp) (reg rdx)) ++
-						(popq rdi) ++ (movq (reg rdi) (ind ~ofs:offset rdx)) ;
-					data = curPrgm.data ++ compExpr.data
-				}
+	let fieldsInit = List.fold_left (fun curPrgm var ->
+			let compExpr = compileExpr var.vexpr clEnv stackDepth in
+			let offset = SMap.find var.vname metaDescr.vals in
+			{
+				text = curPrgm.text ++ compExpr.text ++ (pushq (reg rdi)) ++
+					(movq (ind ~ofs:(-8) rbp) (reg rdx)) ++
+					(popq rdi) ++ (movq (reg rdi) (ind ~ofs:offset rdx)) ;
+				data = curPrgm.data ++ compExpr.data
+			}
 		)
 		{text = nop ; data = nop}
-		metaDescr.clType.tcbody in (* Keeping the order might be necessary *)
+		metaDescr.valsOrder in (* Keeping the order might be necessary *)
 	{
 		text = alloc ++ (* Allocate *)
 			(* Evaluate parameters *)
@@ -290,8 +293,8 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		| NEqual -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setne)
 		| Less -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setl)
 		| Leq -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setle)
-		| Greater -> (cmpq (reg rdi) (reg rax)) ++ (setQReg seta)
-		| Geq -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setae)
+		| Greater -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setg)
+		| Geq -> (cmpq (reg rdi) (reg rax)) ++ (setQReg setge)
 		| Land -> andq (reg rax) (reg rdi)
 		| Lor -> orq (reg rax) (reg rdi)
 	) in
@@ -416,34 +419,83 @@ let buildMethod meth methLab env =
 
 
 let buildClassDescriptor cl =
+	let superName = (match cl.textends with
+		| Some c -> fst (c.textType)
+		| None -> raise (InternalError "Class inheriting from no other! A \
+			rogue typer might be on the loose!")) in
+	let superMetaDescr = SMap.find superName !metaDescriptors in
+
 	let env = SMap.empty in
-	let varsLocs = let next = ref 0 in SMap.fold (fun name var prev ->
+	let varsLocs = let next = ref ((SMap.cardinal superMetaDescr.vals) * 8)
+		in SMap.fold (fun name var prev ->
 			(* Add fields as vars *)
-			next := !next + 8 ;
-			SMap.add name !next prev
+			if not (SMap.mem name prev) then (
+				next := !next + 8 ;
+				SMap.add name !next prev
+			) else
+				prev
 		) cl.tcvars
 		(List.fold_left (fun prev cur -> (* Add class parameters as vars *)
 				next := !next + 8 ;
 				SMap.add (fst cur) !next prev)
-			SMap.empty cl.tcparams) in
+			(superMetaDescr.vals) cl.tcparams) in
+
+	(* Rebuild locations list from the inherited class *)
+	let addrLabelsArray = Array.make
+		((SMap.cardinal superMetaDescr.methLabels)+1) "" in
+	SMap.iter (fun name pos ->
+			let lab = SMap.find name superMetaDescr.methLabels in
+			addrLabelsArray.(pos / 8) <- lab)
+		superMetaDescr.methods ;
+	let inheritedLocs = List.rev (List.tl (Array.to_list addrLabelsArray)) in
+
+	(* Build maps *)
+	let overrideMap = ref SMap.empty in
 	let methLocs,methLabels,locs,_ = SMap.fold
 		(fun name _ (prevLocs,prevLbl,prevLocsLst,i) ->
 			let methLab = ("M"^(nextMethLabel ())^"_"^cl.tcname^"_"^name) in
-			(SMap.add name i prevLocs,
-			SMap.add name methLab prevLbl,
-			methLab::prevLocsLst,
-			i+8)
-		) cl.tcmeth (SMap.empty, SMap.empty, [], 8) in
+			(try (* If overriding *)
+				let overrideLbl = SMap.find name prevLbl in
+				overrideMap := SMap.add overrideLbl methLab !overrideMap ;
+				(prevLocs,
+				SMap.add name methLab prevLbl,
+				prevLocsLst,
+				i)
+			with Not_found -> (* Not overriding *)
+				(SMap.add name i prevLocs,
+				SMap.add name methLab prevLbl,
+				methLab::prevLocsLst,
+				i+8)
+			)
+		) cl.tcmeth (superMetaDescr.methods,
+			superMetaDescr.methLabels,
+			[], (Array.length addrLabelsArray)*8) in
+	let locs = locs @ inheritedLocs in
+	
+	(* Redefine locs replacing the overriden methods' labels *)
+	let locs = List.map (fun lab ->
+			(try SMap.find lab !overrideMap
+			 with Not_found -> lab))
+		locs in
 			
 	let descriptorLabel = "D_"^cl.tcname in
-	let dataAdd = (label descriptorLabel) ++ (dquad [0]) ++ (*FIXME temp*)
+	let dataAdd = (label descriptorLabel) ++
+		(address [superMetaDescr.memLoc]) ++
 		(address (List.rev locs))
 	in
+
+	let valsOrderList = List.rev (List.fold_left (fun cur elem ->
+		match elem with
+			| TDvar(tv) -> tv::cur
+			| TDmeth(_) -> cur
+		) (List.rev (superMetaDescr.valsOrder)) cl.tcbody) in
 
 	metaDescriptors := SMap.add cl.tcname {
 			memLoc = descriptorLabel ;
 			methods = methLocs ;
+			methLabels = methLabels ;
 			vals = varsLocs ;
+			valsOrder = valsOrderList ;
 			clType = cl
 		} !metaDescriptors ;
 
@@ -479,7 +531,20 @@ let compileTypPrgm prgm =
 			tcvariance = TMneutral
 		} in
 	let mkBaseClassNF = mkBaseClass [] in
+
+	(* Add a dummy metaDescriptor from Any, from which Any can inherit *)
+	metaDescriptors := SMap.add "Any" {
+		memLoc = "0" ;
+		methods = SMap.empty ;
+		methLabels = SMap.empty ;
+		vals = SMap.empty ;
+		valsOrder = [] ;
+		clType = mkBaseClassNF "Any" "Any"} !metaDescriptors ;
+	
+	(* Really build the classes *)
 	let buildClasses = [
+			mkBaseClassNF "Any" "Any";
+			mkBaseClassNF "AnyRef" "Any" ;
 			mkBaseClass ["data"] "String" "AnyRef"
 		] @ (prgm.tclasses) @ [prgm.tmain] in
 
