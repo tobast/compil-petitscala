@@ -14,7 +14,7 @@ txtrst='\e[0m'
 
 echo "Tests positifs (fichiers dans tests/good/)"
 
-for f in tests/exec/*.scala; do
+for f in tests/exec/*.scala tests/exec_add/good/*.scala; do
     maxPos=`expr $maxPos + 1`;
     echo -n $f
 	./pscala -o /tmp/pscala_tmp.s "$f" 2>&1 > /dev/null
