@@ -48,6 +48,9 @@ let nextStringId =
 		nextStringId := !nextStringId + 1 ;
 		("string"^(string_of_int !nextStringId)))
 
+let nextLazyLabel =
+	let next = ref (-1) in
+	(fun () -> next := !next+1 ; "lazyness"^(string_of_int !next))
 let nextIfId =
 	let next = ref (-1) in
 	(fun () -> next := !next+1 ; "L"^(string_of_int !next)^"_")
@@ -263,8 +266,21 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 | TEbinop(op,exp1, exp2) ->
 	let exprComp1 = compileExpr exp1 env stackDepth
 	and exprComp2 = compileExpr exp2 env stackDepth in
+
+	(* Allow the program to jump over the evaluation of the right operand if
+	 it can be evaluated lazily *)
+	let lazyLabel = (match op with
+		| Land | Lor -> nextLazyLabel ()
+		| _ -> "") in
+	let lazyLabelAsm = if lazyLabel <> "" then (label lazyLabel) else nop in
+	let lazyJump = (match op with
+		| Land -> (testq (reg rdi) (reg rdi)) ++ (je lazyLabel)
+		| Lor -> (testq (reg rdi) (reg rdi)) ++ (jne lazyLabel)
+		| _ -> nop) in
+
 	let preOp = {
 		text = exprComp1.text ++
+			lazyJump ++
 			pushq (reg rdi) ++
 			exprComp2.text ++ (* Result of exp2 is in rdi *)
 			popq rax (* Result of exp1 is on rax *)
@@ -280,11 +296,9 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		| Minus -> (subq (reg rdi) (reg rax)) ++ (movq (reg rax) (reg rdi))
 		| Times -> imulq (reg rax) (reg rdi)
 		| Div ->
-			(movq (ilab "0") (reg rdx)) ++ (idivq (reg rdi)) ++
-			(movq (reg rax) (reg rdi))
+			cqto ++ (idivq (reg rdi)) ++ (movq (reg rax) (reg rdi))
 		| Mod ->
-			(movq (ilab "0") (reg rdx)) ++ (idivq (reg rdi)) ++
-			(movq (reg rdx) (reg rdi))
+			cqto ++ (idivq (reg rdi)) ++ (movq (reg rdx) (reg rdi))
 		(* Logical *)
 		(* Use the setcc functions! *)
 		| KwEqual -> (cmpq (reg rdi) (reg rax)) ++ (setQReg sete)
@@ -299,7 +313,7 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 		| Lor -> orq (reg rax) (reg rdi)
 	) in
 
-	{ preOp with text = preOp.text ++ opAction }
+	{ preOp with text = preOp.text ++ opAction ++ lazyLabelAsm}
 
 | TEif(cond,expIf,expElse) ->
 	let labelStr = nextIfId () in
