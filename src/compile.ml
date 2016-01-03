@@ -226,33 +226,17 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	let evalParams = makeEvalParams {text=nop;data=nop}
 		(metaDescr.clType.tcparams, params) in
 
-	(* To make the program behave as if `this' was the class we're building
-	 in order to fill the objects' fields, we fake a function start on the
-	 stack, then reference `this' as rbp-8 *)
-	let chThis = (pushq (reg rbp)) ++ (movq (reg rsp) (reg rbp))
-	and unchThis = (popq rbp) in
-	let clEnv = SMap.singleton "this" (Offset(-8,Here)) in
+	let fieldsInitCode = initFields metaDescr stackDepth in
 
-	let fieldsInit = List.fold_left (fun curPrgm var ->
-			let compExpr = compileExpr var.vexpr clEnv stackDepth in
-			let offset = SMap.find var.vname metaDescr.vals in
-			{
-				text = curPrgm.text ++ compExpr.text ++ (pushq (reg rdi)) ++
-					(movq (ind ~ofs:(-8) rbp) (reg rdx)) ++
-					(popq rdi) ++ (movq (reg rdi) (ind ~ofs:offset rdx)) ;
-				data = curPrgm.data ++ compExpr.data
-			}
-		)
-		{text = nop ; data = nop}
-		metaDescr.valsOrder in (* Keeping the order might be necessary *)
 	{
 		text = alloc ++ (* Allocate *)
 			(* Evaluate parameters *)
 			(pushq (reg rax)) ++ evalParams.text ++ (popq rax) ++
 			(* Initialize class fields *)
-			chThis ++ (pushq (reg rax)) ++ fieldsInit.text ++
-			(popq rax) ++ unchThis ++ (movq (reg rax) (reg rdi));
-		data = evalParams.data ++ fieldsInit.data
+			fieldsInitCode.text ++
+			(* Return code *)
+			(movq (reg rax) (reg rdi));
+		data = evalParams.data ++ fieldsInitCode.data
 	}
 
 | TEunaryop(UnaryNot, exp) ->
@@ -418,6 +402,48 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	{ folded with
 		text = folded.text ++
 			(addq (imm (!nStackDepth-stackDepth)) (reg rsp)) (* Restore rsp *)
+	}
+
+(***
+ * Initializes the fields of a class, assuming that "this" pointer to the
+ * allocated block is in %rax, %rbp is correctly set and the allocated block
+ * contains the already initialized parameters of the class.
+ ***)
+and initFields metaDescr stackDepth =
+	(* To make the program behave as if `this' was the class we're building
+	 in order to fill the objects' fields, we fake a function start on the
+	 stack, then reference `this' as rbp-8 *)
+	let chThis = (pushq (reg rbp)) ++ (movq (reg rsp) (reg rbp))
+	and unchThis = (popq rbp) in
+	let clEnv = SMap.singleton "this" (Offset(-8,Here)) in
+
+	let fieldsInit = List.fold_left (fun curPrgm var ->
+			let compExpr = compileExpr var.vexpr clEnv stackDepth in
+			let offset = SMap.find var.vname metaDescr.vals in
+			{
+				text = curPrgm.text ++ compExpr.text ++ (pushq (reg rdi)) ++
+					(movq (ind ~ofs:(-8) rbp) (reg rdx)) ++
+					(popq rdi) ++ (movq (reg rdi) (ind ~ofs:offset rdx)) ;
+				data = curPrgm.data ++ compExpr.data
+			}
+		)
+		{text = nop ; data = nop}
+		metaDescr.valsOrder in (* Keeping the order might be necessary *)
+	
+	(*
+	let inheritanceCode = (match metaDescr.clType.textends with
+		| None -> raise (InternalError ("Class inheriting from no other! \
+			This should not be possible, typer error."))
+		| Some ext ->
+			if (fst ext.textType) <> "Any" then begin
+				
+			end
+		)		
+	*)
+	{
+		text = chThis ++ (pushq (reg rax)) ++ fieldsInit.text ++
+			(popq rax) ++ unchThis ;
+		data = fieldsInit.data
 	}
 
 
