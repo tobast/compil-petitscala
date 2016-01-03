@@ -206,37 +206,16 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 	}
 
 | TEinstantiate(idt, _, params) ->
-	let metaDescr = SMap.find idt !metaDescriptors in
-	let rec makeEvalParams cur = function
-	| [],[] -> cur
-	| fHead::fTail, curParam::ptail ->
-			let compParam = compileExpr curParam env stackDepth in
-			let offset = SMap.find (fst fHead) metaDescr.vals in
-			makeEvalParams {
-					text = cur.text ++ compParam.text ++ (popq rdx) ++
-						(movq (reg rdi) (ind ~ofs:offset rdx)) ++
-						(pushq (reg rdx)) ;
-					data = cur.data ++ compParam.data
-				} (fTail, ptail)
-	| _,_ -> raise (InternalError ("Wrong number of parameters. What the hell \
-		did the typer?!"))
-	in
-		
 	let alloc = (allocateBlock idt) in
-	let evalParams = makeEvalParams {text=nop;data=nop}
-		(metaDescr.clType.tcparams, params) in
-
-	let fieldsInitCode = initFields metaDescr stackDepth in
+	let fieldsInitCode = initFields idt env params stackDepth in
 
 	{
 		text = alloc ++ (* Allocate *)
-			(* Evaluate parameters *)
-			(pushq (reg rax)) ++ evalParams.text ++ (popq rax) ++
 			(* Initialize class fields *)
 			fieldsInitCode.text ++
 			(* Return code *)
 			(movq (reg rax) (reg rdi));
-		data = evalParams.data ++ fieldsInitCode.data
+		data = fieldsInitCode.data
 	}
 
 | TEunaryop(UnaryNot, exp) ->
@@ -406,10 +385,25 @@ let rec compileExpr argExp env stackDepth = match argExp.tex with
 
 (***
  * Initializes the fields of a class, assuming that "this" pointer to the
- * allocated block is in %rax, %rbp is correctly set and the allocated block
- * contains the already initialized parameters of the class.
+ * allocated block is in %rax and %rbp is correctly set.
  ***)
-and initFields metaDescr stackDepth =
+and initFields idt env params stackDepth =
+	let metaDescr = SMap.find idt !metaDescriptors in
+	let rec makeEvalParams cur = function
+	| [],[] -> cur
+	| fHead::fTail, curParam::ptail ->
+			let compParam = compileExpr curParam env stackDepth in
+			let offset = SMap.find (fst fHead) metaDescr.vals in
+			makeEvalParams {
+					text = cur.text ++ compParam.text ++ (popq rdx) ++
+						(movq (reg rdi) (ind ~ofs:offset rdx)) ++
+						(pushq (reg rdx)) ;
+					data = cur.data ++ compParam.data
+				} (fTail, ptail)
+	| _,_ -> raise (InternalError ("Wrong number of parameters. What the hell \
+		did the typer?!"))
+	in
+		
 	(* To make the program behave as if `this' was the class we're building
 	 in order to fill the objects' fields, we fake a function start on the
 	 stack, then reference `this' as rbp-8 *)
@@ -430,20 +424,30 @@ and initFields metaDescr stackDepth =
 		{text = nop ; data = nop}
 		metaDescr.valsOrder in (* Keeping the order might be necessary *)
 	
-	(*
+	let evalParams = makeEvalParams {text=nop;data=nop}
+		(metaDescr.clType.tcparams, params) in
+
 	let inheritanceCode = (match metaDescr.clType.textends with
 		| None -> raise (InternalError ("Class inheriting from no other! \
 			This should not be possible, typer error."))
 		| Some ext ->
 			if (fst ext.textType) <> "Any" then begin
-				
-			end
-		)		
-	*)
+				initFields (fst ext.textType) clEnv (ext.tparam) stackDepth
+			end else
+				{ text=nop; data=nop }
+		)
+	in
+
 	{
-		text = chThis ++ (pushq (reg rax)) ++ fieldsInit.text ++
+		text =
+			(* Evaluate parameters *)
+			(pushq (reg rax)) ++ evalParams.text ++ (popq rax) ++
+			(* Inherit class initialization *)
+			inheritanceCode.text ++
+			(* Initialize fields (other than parameters *)
+			chThis ++ (pushq (reg rax)) ++ fieldsInit.text ++
 			(popq rax) ++ unchThis ;
-		data = fieldsInit.data
+		data = evalParams.data ++ inheritanceCode.data ++ fieldsInit.data
 	}
 
 
@@ -524,11 +528,13 @@ let buildClassDescriptor cl =
 		(address (List.rev locs))
 	in
 
+	(* We **DO NOT** take into account inherited values, as the constructors
+	 * will be called recursively and will initialized the inherited fields. *)
 	let valsOrderList = List.rev (List.fold_left (fun cur elem ->
 		match elem with
 			| TDvar(tv) -> tv::cur
 			| TDmeth(_) -> cur
-		) (List.rev (superMetaDescr.valsOrder)) cl.tcbody) in
+		) [] cl.tcbody) in
 
 	metaDescriptors := SMap.add cl.tcname {
 			memLoc = descriptorLabel ;
@@ -539,7 +545,6 @@ let buildClassDescriptor cl =
 			clType = cl
 		} !metaDescriptors ;
 
-	(* TODO inherit and preserve order *)
 	let compiled = SMap.fold (fun name code prevComp ->
 			let methLabel = SMap.find name methLabels in
 			let methComp = buildMethod code methLabel env in
