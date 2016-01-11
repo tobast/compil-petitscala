@@ -31,7 +31,12 @@ CMP=ocamlopt
 
 COMMA_RECDIR=$(shell echo $(RECDIR) | sed -s 's/ /,/g')
 
-all: $(BIN)
+all: precheck $(BIN)
+
+precheck:
+	@echo -ne "Checking OCaml version...\t"
+	@bash __checkOCamlVersion.sh
+	@echo "OK."
 
 $(BIN): $(OBJS)
 	$(CMP) $(FLAGS) -o $(BIN) $(CMX)
