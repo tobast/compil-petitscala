@@ -12,6 +12,14 @@ prgmFail=0
 txtred='\e[0;31m'
 txtrst='\e[0m'
 
+if ! [ -d tests/exec_add ] ; then
+	echo "Cloning exec_add repository..."
+	git clone https://compil.tobast.fr/git/exec_add tests/exec_add
+else
+	echo "Pulling exec_add repository..."
+	(cd tests/exec_add && git pull)
+fi
+
 echo "Tests positifs (fichiers dans tests/good/)"
 
 for f in tests/exec/*.scala tests/exec_add/good/*.scala; do
