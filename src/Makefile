@@ -22,6 +22,7 @@ OBJS= lang/ast.cmx lang/typedAst.cmx \
 	lang/lexer.ml lang/lexer.cmx \
 	x86_64/x86_64.cmx \
 	typer.cmx compile.cmx main.cmx
+GENERATED=lang/lexer.ml lang/parser.ml lang/parser.mli
 BIN=pscala
 RECDIR=lang x86_64
 INCLUDE_RECDIR=$(shell echo $(RECDIR) | sed -s 's/ / -I /g')
@@ -35,21 +36,6 @@ all: $(BIN)
 $(BIN): $(OBJS)
 	$(CMP) $(FLAGS) -o $(BIN) $(CMX)
 
-#.SUFFIXES: .mli .ml .cmi .cmx .mll .mly
-
-#.mli.cmi:
-#	$(CMP) $(FLAGS) -c  $<
-#
-#.ml.cmx:
-#	$(CMP) $(FLAGS) -c  $<
-#
-#.mll.ml:
-#	ocamllex $<
-#
-#.mly.ml:
-#	@# How can I include a directory in menhir?! -I is not defined.
-#	cd `dirname $<` && menhir --infer -v `basename $<`
-
 %.cmx: %.ml
 	if [ -f $<i ] ; then $(CMP) $(FLAGS) -c $<i ; fi
 	$(CMP) $(FLAGS) -c $<
@@ -57,6 +43,10 @@ $(BIN): $(OBJS)
 lang/parser.ml: lang/parser.mly
 	cd `dirname $<` && menhir --infer -v `basename $<`
 
+lang/lexer.ml: lang/lexer.mll
+	ocamllex $<
+
 clean:
-	rm -f {.,$(COMMA_RECDIR)}/*{.cmi,.cmx,.o,~} $(GENERATED) \
+	rm -f {.,$(COMMA_RECDIR)}/*{.cmi,.cmx,.o,~} \
+		$(GENERATED) \
 		lang/parser.automaton ${BIN}
